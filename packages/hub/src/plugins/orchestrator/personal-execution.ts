@@ -6,7 +6,7 @@ import type { Repos, RunRow } from '../../services/store.js'
 import { verificationRecord } from './harness.js'
 
 type Project = { id: string; phase: string; plan_json: string; sources_json: string; binding_json: string; active_ms: number; last_commit: string | null }
-type Item = { item_id: string; ordinal: number; active_ms: number; status: string; review_rounds: number; rejects: number; unknown_rounds: number; repair_debug_calls: number }
+type Item = { item_id: string; ordinal: number; active_ms: number; status: string; review_rounds: number; rejects: number; unknown_rounds: number; repair_debug_calls: number; tested_json: string | null; commit_sha: string | null; remote_sha: string | null }
 type Step = { project_id: string; item_id: string; task_id: string; run_id: string | null; result_json: string | null; kind: string; ordinal: number }
 const hour = 3_600_000
 const managed = (reason: string) => new HubError('INVALID_TRANSITION', 409, { reason })
@@ -26,7 +26,7 @@ export function managedTask(db: Repos, task: string) {
 }
 export function projectExecution(db: Repos, id: string) {
   const project = db.prepare('SELECT * FROM personal_projects WHERE id=?').get(id) as Project | undefined
-  const final = project && ['final_ready','final_consulting','acceptance_ready'].includes(project.phase)
+  const final = project && ['core_ready','verifying_final','final_ready','final_consulting','acceptance_ready'].includes(project.phase)
   const item = (final ? db.prepare('SELECT * FROM personal_items WHERE project_id=? ORDER BY ordinal DESC LIMIT 1') :
     db.prepare("SELECT * FROM personal_items WHERE project_id=? AND status!='delivered' ORDER BY ordinal LIMIT 1")).get(id) as Item | undefined
   if (!project || !item) throw managed('FIXED_ITEM_UNAVAILABLE')
@@ -50,7 +50,7 @@ export function finishImplementation(db: Repos, run: RunRow, event: Extract<RunE
   const step = executionStep(db, run.taskId)
   if (!step || !['implement','repair'].includes(step.kind) || step.run_id !== run.id || step.result_json) return
   const result = JSON.stringify({ status: event.status, exitCode: event.exitCode, verification: event.verification ?? null,
-    digest: event.personalResultDigest ?? null, usage: event.usage ?? 'unknown', durationMs: event.durationMs })
+    digest: event.personalResultDigest ?? null, candidate: event.testedCandidate, usage: event.usage ?? 'unknown', durationMs: event.durationMs })
   const elapsed = Math.max(0, event.durationMs)
   db.prepare('UPDATE personal_steps SET result_json=?,active_ms=? WHERE task_id=?').run(result, elapsed, run.taskId)
   db.prepare('UPDATE personal_items SET active_ms=active_ms+? WHERE project_id=? AND item_id=?').run(elapsed, step.project_id, step.item_id)
@@ -67,7 +67,7 @@ export function finishImplementation(db: Repos, run: RunRow, event: Extract<RunE
     event.personalResultDigest === createHash('sha256').update(event.summary).digest('hex')
   const timeout = db.tasks.get(run.taskId)!.timeoutMs
   const reason = event.durationMs < 0 ? 'DURATION_UNKNOWN' : project.active_ms >= 24 * hour || item.active_ms >= 4 * hour || elapsed >= timeout ? 'TIME_BUDGET' :
-    !complete ? 'IMPLEMENTATION_UNCONFIRMED' : !tested ? 'REQUIRED_CHECK_NOT_PASSED' : null
+    !complete ? 'IMPLEMENTATION_UNCONFIRMED' : !tested ? 'REQUIRED_CHECK_NOT_PASSED' : event.testedCandidate?.head !== execution.head ? 'TESTED_CANDIDATE_UNKNOWN' : null
   if (reason === 'REQUIRED_CHECK_NOT_PASSED' && event.verification?.status === 'failed' && attempts.length === 1 && attempts[0]?.status === 'failed' &&
       results.length === expected.length && results.every((r,i) => r.id === expected[i]) &&
       results.some(r => r.status === 'failed' && r.exitCode !== null && r.exitCode !== 0) &&
@@ -75,6 +75,7 @@ export function finishImplementation(db: Repos, run: RunRow, event: Extract<RunE
     db.prepare("UPDATE personal_projects SET phase='debug_ready',reason=?,updated_at=? WHERE id=?").run(reason,now,project.id)
     return
   }
-  db.prepare('UPDATE personal_items SET status=? WHERE project_id=? AND item_id=?').run(reason ? 'blocked' : 'awaiting_review', project.id, item.item_id)
+  db.prepare('UPDATE personal_items SET status=?,tested_json=? WHERE project_id=? AND item_id=?').run(reason ? 'blocked' : 'awaiting_review',
+    reason ? null : JSON.stringify(event.testedCandidate), project.id, item.item_id)
   db.prepare('UPDATE personal_projects SET phase=?,reason=?,updated_at=? WHERE id=?').run(reason ? 'blocked' : 'review_ready', reason, now, project.id)
 }

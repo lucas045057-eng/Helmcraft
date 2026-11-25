@@ -23,7 +23,8 @@ import { checkPersonalRole, personalInvocation } from '../personal/roles.js'
 import { PersonalResult } from '../personal/result.js'
 import { preparePlan } from '../personal/plan.js'
 import { planBaseline, requiredCommands } from '../personal/execution.js'
-import { roleInput } from '../personal/review-input.js'
+import { checkedCandidate, roleInput } from '../personal/review-input.js'
+import { deliver, observeDelivery } from '../personal/delivery.js'
 import { type AdapterRegistry } from '../adapters/registry.js'
 import { RunOutbox } from '../tunnel/outbox.js'
 import { trackProcessTree } from './kill-tree.js'
@@ -149,6 +150,8 @@ export class RunManager {
         checkPersonalRole(personal.role, command)
         if (personal.gate && (!personal.projectId || personal.execution || personal.planSources || command.harness ||
           personal.role !== (personal.gate.kind === 'review' ? 'reviewer' : personal.gate.kind === 'debug' ? 'main' : 'advisor'))) throw new Error('Invalid role gate')
+        if (personal.delivery && (personal.role !== 'main' || !personal.projectId || personal.planSources || personal.execution ||
+          personal.repair || personal.gate || !!command.harness !== (personal.delivery.kind === 'verify_final'))) throw new Error('Invalid delivery')
         if (personal.repair && !personal.execution) throw new Error('Missing repair baseline')
         if (personal.execution && (!personal.projectId || personal.role !== 'main' || personal.planSources ||
           !command.harness?.verify || !this.config.harness.enabled)) throw new Error('Invalid item execution')
@@ -244,9 +247,43 @@ export class RunManager {
     }
     let plan: ReturnType<typeof preparePlan> | undefined
     let gate: ReturnType<typeof roleInput> | undefined
+    if (run.command.personal?.delivery) {
+      const action = run.command.personal.delivery
+      let verification: VerificationSummary | undefined
+      try {
+        checkBinding()
+        this.checkWriter(workspace, root)
+        if (!this.journal.projectOccupation.permits(root,run.command.personal.projectId)) throw new Error('PROJECT_OCCUPIED')
+        const commands = requiredCommands(action.spec, localHarness.verify.commands)
+        const verified = await deliver(run.command.personal.binding, action, run.abort.signal, checkBinding, async () => {
+          if (!session?.applied.verify) throw new Error('CORE_CHECKS_UNAVAILABLE')
+          const confirm = this.journal.verificationHolds.begin(id, workspace, root)
+          run.pauseIdle = true
+          const result = await verifyAttempt({ clock:this.clock, root, runId:id, deadline:run.started+run.command.timeoutMs,
+            signal:run.abort.signal, force:run.grace.signal, warn:this.warn, knownSecrets, patterns:this.patterns, journal:this.journal,
+            useJobObject:this.config.security.useJobObject, emit:ev=>this.outbox.push(id,ev),
+            log:(stream,text)=>this.outbox.push(id,{kind:'log',stream,...boundLogLine({text},this.maxLogEntryBytes)}) },
+          {...localHarness.verify,commands},1)
+          verification = result.summary
+          if (!result.cleanupUnconfirmed) confirm()
+          if (result.cleanupUnconfirmed || verification.status !== 'passed') throw new Error('FINAL_CHECKS_NOT_PASSED')
+        })
+        const summary = JSON.stringify({...verified,kind:action.kind,itemId:action.spec.item.id,taskId:run.command.taskId,runId:id})
+        this.finish(run,{kind:'finished',status:'succeeded',exitCode:0,signal:null,summary,personalResultDigest:createHash('sha256').update(summary).digest('hex'),
+          durationMs:Math.floor(this.clock.monotonic()-run.started),...(verification && {verification})})
+      } catch (error) {
+        const reason = error instanceof Error && /^[A-Z_]{1,80}$/u.test(error.message) ? error.message : 'GIT_OR_CHECK_RESULT_UNCONFIRMED'
+        const observation = await observeDelivery(run.command.personal.binding,checkBinding)
+        this.outbox.push(id,{kind:'log',stream:'system',text:JSON.stringify({step:action.kind,reason,...observation})})
+        this.finish(run,{kind:'finished',status:'failed',exitCode:null,signal:null,errorCode:'ADAPTER_ERROR',summary:reason,
+          durationMs:Math.floor(this.clock.monotonic()-run.started),...(verification && {verification})})
+      }
+      return
+    }
     if (run.command.personal?.gate) {
       try {
         checkBinding()
+        requiredCommands(run.command.personal.gate.spec,localHarness.verify.commands)
         gate = roleInput(root,run.command)
         invocation = build(gate.prompt)
       } catch {
@@ -411,6 +448,7 @@ export class RunManager {
           else if (event.tamper) verification = { status: 'skipped', reason: 'TAMPER_RISK', attempts, failed: [] }
           else if (round === 0 && (!event.changes.total || event.changes.boardOnly)) verification = { status: 'skipped', reason: 'NO_CHANGES', attempts, failed: [] }
           else if (!interrupted()) {
+            const candidate = execution ? checkedCandidate(root) : undefined
             attempts++
             checkpoint()
             run.grace = new AbortController()
@@ -428,7 +466,13 @@ export class RunManager {
             }
             try { local?.flush() } catch { this.warn('Local verification log flush failed') }
             verification = summary
-            if (execution) { checkBinding(); planBaseline(root, execution, false) }
+            if (execution && candidate) {
+              checkBinding()
+              planBaseline(root, execution, false)
+              if (candidate.head !== execution.head) throw new Error('CANDIDATE_CHANGED')
+              checkedCandidate(root, candidate)
+              aggregate.testedCandidate = candidate
+            }
             const facts = !verificationHeld && nextRepair(summary, results, event.changes, round, session.applied.autoFixMaxRetries, deadline - this.clock.monotonic(), run.command.timeoutMs)
             if (facts && !interrupted()) {
               const resume = probe.adapter?.features.resume && aggregate.cliSessionId && !aggregate.cliSessionId.startsWith('-') ? aggregate.cliSessionId : undefined

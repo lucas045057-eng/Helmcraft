@@ -29,6 +29,7 @@ import { handoffSource, preview } from './handoff.js'
 import { existingPlan, findPlanningTask, recordPlanningTask, recordPlanResult } from './personal-plan.js'
 import { beginImplementation, blockProject, executionStep, finishImplementation, managedTask, occupied, projectExecution } from './personal-execution.js'
 import { beginGate, finishGate, gatePhases, personalDispatch, planAdvice, prepareGate, stepCanDispatch } from './personal-gates.js'
+import { finishDelivery } from './personal-delivery.js'
 
 type Effect = TaskEffect | { type: 'pointer.changed'; workerId: string; workspaceId: string } | { type: 'harness.updated' } | { type: 'verification.outcome'; status: 'passed' | 'failed' | 'unverified' | 'skipped' }
 export interface OrchestratorConfig {
@@ -402,7 +403,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
           const step = executionStep(db, id)
           if (step) db.prepare('UPDATE personal_steps SET run_id=? WHERE task_id=? AND run_id IS NULL').run(write.runId, id)
           const planning = db.prepare("UPDATE personal_projects SET plan_run_id=? WHERE plan_task_id=? AND phase='planning'").run(write.runId, id).changes > 0
-          const harness: HarnessRecord | null = planning || (step && !['implement','repair'].includes(step.kind)) ? null : step ? { v: 1, directive: { v: 1, board: 'off', bootstrap: false,
+          const harness: HarnessRecord | null = planning || (step && !['implement','repair','verify_final'].includes(step.kind)) ? null : step ? { v: 1, directive: { v: 1, board: 'off', bootstrap: false,
             inject: 'none', trust: 'owner', verify: { autoFixMaxRetries: 0 } } } : planHarness(db, task, { ...write, id: write.runId }, this.config.harness,
             this.ctx.workers.capabilities(write.workerId), now, () => this.audit(db, id, system, 'task.harness.facts_dropped', null, null, { runId: write.runId }))
           if (harness) this.harnessDispatches++
@@ -455,8 +456,11 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     if (next.version !== task.version) {
       if (['RUN_REFUSED','DISPATCH_LOST','RUN_LOST','INPUT_REQUEST','CANCEL'].includes(event.type) ||
           ['failed','timed_out','cancelled','rejected'].includes(next.status)) {
-        const project = executionStep(db, id)?.project_id ?? findPlanningTask(db, id)?.id
-        if (project) blockProject(db, project, next.errorCode ?? event.type, now)
+        const step = executionStep(db,id)
+        const project = step?.project_id ?? findPlanningTask(db,id)?.id
+        // The terminal delivery receipt includes the Git operation and its precise stopping reason.
+        const deliveryResult = step && ['commit','push','verify_final'].includes(step.kind) && event.type === finishedType.failed
+        if (project && !deliveryResult) blockProject(db, project, next.errorCode ?? event.type, now)
       }
       if (!db.tasks.casUpdate(id, task.version, changes)) {
         throw new HubError('VERSION_CONFLICT', 409, { current: this.view(this.requireTask(id), event.actor) })
@@ -634,6 +638,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       const record = fresh.harnessJson as HarnessRecord | null
       finishImplementation(db, fresh, event, this.now())
       finishGate(db,fresh,event,this.now())
+      finishDelivery(db,fresh,event,this.now())
       const outcome = finishVerification(db, fresh, event.verification, event.errorCode === 'WORKER_RESTARTED' ? 'WORKER_RESTARTED' : 'INTERNAL')
       if (outcome) {
         effects.push({ type: 'verification.outcome', status: outcome.status })

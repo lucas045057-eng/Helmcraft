@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AdvisorJudgment, DebugJudgment, GateReceipt, ReviewJudgment } from '@agent-hub/protocol'
-import type { RunDispatch } from '@agent-hub/protocol'
+import type { RunDispatch, TestedCandidate } from '@agent-hub/protocol'
 import { planBaseline } from './execution.js'
 
 const digest = (s: string) => createHash('sha256').update(s).digest('hex')
@@ -34,11 +34,22 @@ export function inspectChanges(root: string) {
   } finally { rmSync(temp,{recursive:true,force:true}) }
 }
 
+export function checkedCandidate(root: string, expected?: TestedCandidate) {
+  const { head, indexTree, tree } = inspectChanges(root)
+  if (expected && (head !== expected.head || indexTree !== expected.indexTree || tree !== expected.tree)) {
+    throw new Error('CANDIDATE_CHANGED')
+  }
+  return { head, indexTree, tree }
+}
+
 export function roleInput(root: string, command: RunDispatch) {
   const gate = command.personal!.gate!
   const spec = gate.spec
   planBaseline(root,spec,false)
   const before = inspectChanges(root)
+  if (gate.kind === 'review' && (!gate.candidate || before.head !== gate.candidate.head ||
+      before.tree !== gate.candidate.tree || before.indexTree !== gate.candidate.indexTree)) throw new Error('CANDIDATE_CHANGED')
+  if (gate.kind === 'FINAL_READY' && (before.diff !== '' || before.indexTree !== before.tree)) throw new Error('FINAL_TREE_CHANGED')
   const docs = spec.sources.map(name => ({ name, content:readFileSync(join(root,name),'utf8') }))
   const format = gate.kind === 'review' ?
     'Return only JSON {"decision":"PASS|REJECT","findings":[{"kind":"requirement|correctness|suggestion","ref":"exact source reference","basis":"observed omission or defect","impact":"consequence"}]}. Only an unmet CURRENT requirement or correctness defect warrants REJECT. Enhancements, style and deferred work are suggestions. Use an empty findings array when appropriate.' :

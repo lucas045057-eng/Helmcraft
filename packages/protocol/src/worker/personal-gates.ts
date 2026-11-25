@@ -1,11 +1,12 @@
 import { z } from 'zod'
+import { TestedCandidate } from './personal-delivery.js'
 import { PersonalItemExecution } from './personal-plan.js'
 
 export const AdvisorTrigger = z.enum(['PLAN_READY','REVIEW_REJECTED_TWICE','DEBUG_NO_ROOT_CAUSE_TWICE','FINAL_READY'])
 export type AdvisorTrigger = z.infer<typeof AdvisorTrigger>
 export const PersonalGateKind = z.enum(['review','debug',...AdvisorTrigger.options])
 export type PersonalGateKind = z.infer<typeof PersonalGateKind>
-export const PersonalGate = z.strictObject({ kind: PersonalGateKind, spec: PersonalItemExecution, ordinal: z.number().int().positive() })
+export const PersonalGate = z.strictObject({ kind: PersonalGateKind, spec: PersonalItemExecution, ordinal: z.number().int().positive(), candidate: TestedCandidate.optional() })
 const text = z.string().trim().min(1).max(1800)
 export const ReviewJudgment = z.strictObject({
   decision: z.enum(['PASS','REJECT']), findings: z.array(z.strictObject({

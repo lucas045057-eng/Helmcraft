@@ -4,6 +4,7 @@ import { HarnessApplied, PromptDigest, ManifestSummary, ManifestDiffSummary, Tam
 import { z } from 'zod'
 import { AdapterId, Profile, RunId, TaskId } from '../common.js'
 import { AgentEvent } from '../agent-event.js'
+import { TestedCandidate } from './personal-delivery.js'
 const Base = z.strictObject({ seq: z.number().int().positive(), ts: z.number().int() })
 
 export const LogStream = z.enum(['stdout', 'stderr', 'system'])
@@ -55,6 +56,7 @@ export const RunEvent = z.discriminatedUnion('kind', [
     errorMessage: z.string().max(2000).optional(),
     summary: z.string().max(20000),                   // 最终回复正文（已脱敏）
     personalResultDigest: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
+    testedCandidate: TestedCandidate.optional(),
     cliSessionId: z.string().max(256).optional(),
     usage: z.strictObject({
       inputTokens: z.number().int().optional(), outputTokens: z.number().int().optional(),

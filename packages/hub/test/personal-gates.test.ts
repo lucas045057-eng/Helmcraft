@@ -24,6 +24,7 @@ async function fixture() {
   recordPlanningTask(db,{projectId:id,binding,sources:['REQ.md']},'plan-task',0)
   recordPlanResult(db,'plan-task','plan-run',{kind:'finished',seq:1,ts:1,status:'succeeded',durationMs:100,exitCode:0,signal:null,
     summary:plan,personalResultDigest:hash(plan)},1)
+  db.prepare('UPDATE personal_items SET tested_json=?').run(JSON.stringify({head:tip,indexTree:tip,tree}))
   const phase=()=>String(db.prepare('SELECT phase FROM personal_projects').pluck().get())
   const set=(phase:string)=>db.prepare('UPDATE personal_projects SET phase=?').run(phase)
   function complete(kind:PersonalGateKind, judgment:unknown, stale=false) {

@@ -22,7 +22,7 @@ function ready(hub: TestHub) {
     db.prepare("UPDATE personal_projects SET phase='implementation_ready' WHERE id='p'").run()
   })
 }
-it.each(['passed','missing','failed','quarantined','budget'])('runs only the first fixed item and gates its %s receipt', async mode => {
+it.each(['passed','missing','failed','quarantined','budget','unbound'])('runs only the first fixed item and gates its %s receipt', async mode => {
   const { hub, cleanup } = await openHarness()
   let worker: FakeWorker | undefined
   try {
@@ -47,6 +47,7 @@ it.each(['passed','missing','failed','quarantined','budget'])('runs only the fir
     }
     const duration = mode === 'budget' ? 1800000 : 1200
     const terminal = { seq, ts: Date.now(), kind: 'finished', status:'succeeded', durationMs:duration, signal:null, exitCode:0, summary:'ok',
+      ...(mode !== 'unbound' && {testedCandidate:{head:'a'.repeat(40),indexTree:'b'.repeat(40),tree:'c'.repeat(40)}}),
       personalResultDigest:hash('ok'), verification:{ status: mode === 'quarantined' ? 'unverified' : mode === 'failed' ? 'failed' : 'passed',
         ...(mode === 'quarantined' && { reason:'INTERNAL' }), attempts:1, failed:mode === 'failed' ? ['core'] : [] } }
     worker.events(d.runId,d.taskId,[terminal])

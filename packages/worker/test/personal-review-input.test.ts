@@ -21,6 +21,11 @@ it('packages the full proposed change and refuses a drifted read-only reply whil
     writeFileSync(join(root,'new.txt'),'new line\n')
     const index=readFileSync(join(root,'.git/index'))
     const command={taskId:'task',runId:'run',prompt:'core passed',personal:{gate:{kind:'review',ordinal:1,spec:{...receipt,first:true,sources:['README.md'],item}}}} as RunDispatch
+    command.personal!.gate!.candidate = inspectChanges(root)
+    const tested=command.personal!.gate!.candidate!
+    command.personal!.gate!.candidate={...tested,tree:'0'.repeat(40)}
+    expect(()=>roleInput(root,command)).toThrow('CANDIDATE_CHANGED')
+    command.personal!.gate!.candidate=tested
     const review=roleInput(root,command)
     for(const expected of ['-old line','+new line','TASKS.md','core passed','Emit a count.']) expect(review.prompt).toContain(expected)
     const reply=JSON.stringify({decision:'PASS',findings:[]})

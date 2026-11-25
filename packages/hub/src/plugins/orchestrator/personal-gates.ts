@@ -1,12 +1,15 @@
 import { createHash } from 'node:crypto'
-import { AdvisorJudgment, DebugJudgment, GateReceipt, personalRoleSettings, ReviewJudgment } from '@agent-hub/protocol'
+import { AdvisorJudgment, DebugJudgment, DeliveryStep, GateReceipt, personalRoleSettings, ReviewJudgment, TestedCandidate } from '@agent-hub/protocol'
 import type { PersonalGateKind, RunDispatch, RunEvent } from '@agent-hub/protocol'
 import type { Repos, RunRow } from '../../services/store.js'
 import { verificationRecord } from './harness.js'
 import { blockProject, executionStep, projectExecution } from './personal-execution.js'
 
+import { deliveryAction, deliveryRoutes } from './personal-delivery.js'
+
 type Kind = PersonalGateKind | 'repair'
 const gates = {
+  ...deliveryRoutes,
   plan_ready: ['PLAN_READY','plan_consulting'], review_ready: ['review','reviewing'],
   debug_ready: ['debug','diagnosing'], repair_ready: ['repair','implementing'],
   reject_advice_ready: ['REVIEW_REJECTED_TWICE','reject_consulting'],
@@ -35,10 +38,17 @@ export function prepareGate(db: Repos, id: string) {
   const ordinal = Number(db.prepare('SELECT count(*) FROM personal_steps WHERE project_id=? AND item_id=? AND kind=?').pluck().get(id,item.item_id,kind)) + 1
   if (kind === 'review' && item.review_rounds >= 5 || ['repair','debug'].includes(kind) && item.repair_debug_calls >= 8) throw new Error('ITEM_CALL_LIMIT')
   if (['PLAN_READY','FINAL_READY','REVIEW_REJECTED_TWICE'].includes(kind) && ordinal !== 1) throw new Error('TRIGGER_ALREADY_RECORDED')
-  const role = kind === 'review' ? 'reviewer' : kind === 'repair' || kind === 'debug' ? 'main' : 'advisor'
+  const delivery = DeliveryStep.safeParse(kind)
+  const role = kind === 'review' ? 'reviewer' : kind === 'repair' || kind === 'debug' || delivery.success ? 'main' : 'advisor'
   const target = personalRoleSettings[role]
   const limit = Math.min(timeout, (role === 'main' ? 30 : role === 'reviewer' ? 20 : 15) * 60000)
   if (limit < 10000) throw new Error('TIME_BUDGET')
+  if (delivery.success) {
+    if (ordinal !== 1) throw new Error('DELIVERY_ALREADY_REQUESTED')
+    deliveryAction(db,id,delivery.data)
+    return {id,kind,active,ordinal,item:item.item_id,role,input:{prompt:'Execute confirmed project step: '+kind,
+      ...target,workspaceId:binding.workspaceId,requiredWorkerId:binding.workerId,timeoutMs:limit}}
+  }
   const history = priorEvidence(db,id,item.item_id)
   const request = kind === 'repair' ? 'Implement the minimal repair using these findings and checks. Preserve the fixed plan and requirements. Leave commit and push to delivery.' :
     'Evaluate only the current requirements and complete evidence. Return the requested structured result.'
@@ -66,11 +76,14 @@ export function beginGate(db: Repos, id: string, taskId: string, now: number) {
 }
 
 export function personalDispatch(db: Repos, step: NonNullable<ReturnType<typeof executionStep>>): NonNullable<RunDispatch['personal']> {
-  const {binding,execution} = projectExecution(db,step.project_id)
+  const {binding,execution,item} = projectExecution(db,step.project_id)
   const base = {projectId:step.project_id,binding}
   if (step.kind === 'implement' || step.kind === 'repair') return {...base,role:'main',execution,...(step.kind === 'repair' && {repair:true as const})}
+  const delivery = DeliveryStep.safeParse(step.kind)
+  if (delivery.success) return {...base,role:'main',delivery:deliveryAction(db,step.project_id,delivery.data)}
   const kind = step.kind as PersonalGateKind
-  return {...base,role:kind==='review'?'reviewer':kind==='debug'?'main':'advisor',gate:{kind,ordinal:step.ordinal,spec:execution}}
+  return {...base,role:kind==='review'?'reviewer':kind==='debug'?'main':'advisor',gate:{kind,ordinal:step.ordinal,spec:execution,
+    ...(kind === 'review' && { candidate:TestedCandidate.parse(JSON.parse(item.tested_json ?? 'null')) })}}
 }
 
 export function nextGate(kind: Kind, receipt: GateReceipt, counts: {review_rounds:number;rejects:number;unknown_rounds:number}) {
@@ -92,7 +105,7 @@ export function nextGate(kind: Kind, receipt: GateReceipt, counts: {review_round
 
 export function finishGate(db: Repos, run: RunRow, event: Extract<RunEvent,{kind:'finished'}>, now: number) {
   const step = executionStep(db,run.taskId)
-  if (!step || ['implement','repair'].includes(step.kind) || step.run_id !== run.id || step.result_json) return
+  if (!step || ['implement','repair'].includes(step.kind) || DeliveryStep.safeParse(step.kind).success || step.run_id !== run.id || step.result_json) return
   const id = step.project_id, itemId = step.item_id, elapsed = Math.max(0,event.durationMs)
   db.prepare('UPDATE personal_steps SET result_json=?,active_ms=? WHERE task_id=?').run(JSON.stringify({
     summary:event.summary, digest:event.personalResultDigest, usage:event.usage ?? 'unknown', status:event.status, exitCode:event.exitCode
@@ -113,6 +126,8 @@ export function finishGate(db: Repos, run: RunRow, event: Extract<RunEvent,{kind
         parsed.itemId !== itemId || parsed.head !== execution.head) throw new Error('Stale role result')
     const phase = nextGate(parsed.kind,parsed,item)
     if (parsed.kind === 'review') {
+      const tested = TestedCandidate.parse(JSON.parse(item.tested_json ?? 'null'))
+      if (parsed.head !== tested.head || parsed.tree !== tested.tree) throw new Error('Review candidate mismatch')
       const review = ReviewJudgment.parse(parsed.judgment)
       if (review.findings.some(f => f.kind === 'requirement' && ![...execution.item.requirements,...execution.item.acceptanceRefs].includes(f.ref))) throw new Error('Unbound requirement')
       db.prepare('UPDATE personal_items SET review_rounds=review_rounds+1,rejects=rejects+? WHERE project_id=? AND item_id=?').run(Number(review.decision==='REJECT'),id,itemId)
