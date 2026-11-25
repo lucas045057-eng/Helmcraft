@@ -8,6 +8,7 @@ import { duration } from './format.js'
 import { Login } from './Login.js'
 import { MissionDrawer } from './MissionDrawer.js'
 import { Pipeline } from './Pipeline.js'
+import { PersonalProject } from './PersonalProject.js'
 import { useDashboard } from './store.js'
 import { SystemPage } from './SystemPage.js'
 import { readTaskFields, TaskFields } from './TaskForm.js'
@@ -103,6 +104,7 @@ function Console({ logout }: { logout: () => Promise<void> }) {
     </nav>
     <main className="console-body">{page === 'overview' ? <>
       <WorkerFleet workers={workers} now={time + clockOffset} />
+      <PersonalProject open={setTaskId} />
       <Pipeline live={live} workers={workers} now={time + clockOffset} lane={lane} setLane={setLane} open={setTaskId} />
     </> : <SystemPage workers={workers} />}</main>
     {createOpen && <CreateDialog close={closeCreate} workers={workers} />}

@@ -47,6 +47,7 @@ export const RunCancel = z.strictObject({
 export const RunInput = z.strictObject({ runId: RunId, requestId: z.string(), answer: z.string().max(20_000) })
 export const WorkerDrain = z.strictObject({ drain: z.boolean(), reason: z.string().max(256).optional() })
 export const WorkerProbe = z.strictObject({ adapters: z.array(AdapterId).optional() })
+export const ProjectRelease = z.strictObject({ projectId: PersonalPlanRequest.shape.projectId, workspaceId: z.string().min(1), root: z.string().min(1) })
 
 export const CmdAck = z.strictObject({
   refId: FrameId,                               // 被确认命令帧的 id
@@ -56,7 +57,7 @@ export const CmdAck = z.strictObject({
       'PROFILE_NOT_ALLOWED', 'PATH_REJECTED', 'EXPIRED', 'INVALID', 'RUN_NOT_FOUND', 'INTERNAL']),
     message: z.string().max(512),
   }).optional(),
-  result: z.strictObject({ runState: RunResumeState.shape.state.optional() }).optional(),
+  result: z.strictObject({ runState: RunResumeState.shape.state.optional(), releasedProject: PersonalPlanRequest.shape.projectId.optional() }).optional(),
 })
 
 export type RunDispatch = z.infer<typeof RunDispatch>

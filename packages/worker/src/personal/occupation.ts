@@ -30,7 +30,8 @@ export class ProjectOccupation {
   }
   release(root: string, project: string) {
     const owner = this.read()
-    if (!owner || owner.project !== project || !this.permits(root, project)) throw new Error('Project occupancy mismatch')
+    if (!owner) return // The project may have stopped before its first dispatch.
+    if (owner.project !== project || !this.permits(root, project)) throw new Error('Project occupancy mismatch')
     unlinkSync(this.path)
   }
 }

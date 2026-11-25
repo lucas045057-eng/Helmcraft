@@ -99,7 +99,7 @@ export class WorkerTunnel {
     const frame = HubToWorkerFrame.safeParse(data)
     if (!frame.success) {
       if (this.welcomed && data && typeof data === 'object' && 'type' in data && typeof data.type === 'string' &&
-        ['run.dispatch', 'run.cancel', 'run.input', 'worker.drain', 'worker.probe'].includes(data.type) &&
+        ['run.dispatch', 'run.cancel', 'run.input', 'worker.drain', 'worker.probe', 'project.release'].includes(data.type) &&
         'id' in data && FrameId.safeParse(data.id).success) {
         this.send({ type: 'cmd.ack', payload: { refId: data.id as string, ok: false, error: { code: 'INVALID', message: 'Invalid command' } } })
         return

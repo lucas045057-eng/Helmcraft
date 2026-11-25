@@ -134,6 +134,7 @@ describe('P-2 补充：缺字段 / 多余字段 / 类型错误 / 超长字符串
     'run.input': ['runId', 'requestId', 'answer'],
     'worker.drain': ['drain'],
     'worker.probe': [],
+    'project.release': ['projectId','workspaceId','root'],
     'run.events': ['runId', 'taskId', 'events'],
     'run.gap': ['runId', 'fromSeq', 'toSeq'],
     'run.ack': ['acks'],

@@ -14,6 +14,8 @@ import { logEntryEnd } from './log-follow.js'
 import { installDashboardWs } from './ws-hub.js'
 import { listAudit } from './audit.js'
 import { runView, owner } from '../orchestrator/views.js'
+import { controlProject } from '../orchestrator/personal-controls.js'
+import { projectReports, projectViews } from '../orchestrator/personal-status.js'
 
 export const name = 'dashboard-api'
 export const inject = ['http', 'auth', 'orchestrator', 'workers', 'store', 'clock', 'policy']
@@ -92,6 +94,18 @@ export function apply(ctx: Context, config: DashboardConfig) {
   })
   route('GET', '/system/fibers', 'admin', () => describeFibers(ctx))
   route('GET', '/tasks', 'read', (req, _res, _params, actor) => api.TaskListResponse.parse(orchestrator.listTasks(parse(api.TaskListQuery, req.query), actor)))
+  route('GET','/personal/projects','read',()=>projectViews(store.repos))
+  const projectId=(params:Record<string,string>)=>parse(api.PersonalPlanRequest.shape.projectId,params.id)
+  for(const action of ['pause','resume','stop'] as const) {
+    route('POST','/personal/projects/:id/'+action,'operate',async (_req,res,params,actor)=>{
+      await controlProject(ctx,projectId(params),action,actor)
+      return res.code(204).send()
+    })
+  }
+  route('GET','/personal/projects/:id/reports','read',(_req,res,params)=>{
+    res.header('Cache-Control','no-store')
+    return store.tx(db=>projectReports(db,projectId(params),ctx.clock.now()))
+  })
   route('POST', '/personal/plans', 'operate', async (req, res, _params, actor) => {
     const plan = parse(api.PersonalPlanRequest, req.body)
     const task = await orchestrator.createTask({ prompt: '生成项目任务计划 ' + plan.projectId, workspaceId: plan.binding.workspaceId,

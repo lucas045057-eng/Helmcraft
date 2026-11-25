@@ -69,6 +69,7 @@ export class RunManager {
   private readonly completed: Lru<string, true>
   private readonly deliveredInputs: Lru<string, true>
   private readonly reporting = new Set<string>()
+  private cleanupRecordFailed = false
   private patterns: string[] = []
   hubDrain = false
   localDrain = false
@@ -386,6 +387,10 @@ export class RunManager {
         try { removeRunTempDir(tempDir) }
         catch { this.warn('Run temp file cleanup failed') }
       }
+      if (personalResult && !treeClosed) {
+        try { this.journal.verificationHolds.recover(id,workspace,root) }
+        catch { this.cleanupRecordFailed = true; this.warn('Could not persist personal cleanup hold') }
+      }
       const stop = cliExited ? stopAtExit : run.stop
       const outcome = parser.finish({ code, signal, timedOut: stop === 'TIMEOUT' || stop === 'IDLE_TIMEOUT', cancelled: !!stop }, item)
       if (personalResult && outcome.status === 'succeeded') {
@@ -701,6 +706,12 @@ export class RunManager {
     if (this.journal.verificationHolds.blocks(workspaceId, path)) {
       throw new WorkerError('WORKSPACE_BUSY', 'VERIFY_CLEANUP_UNCONFIRMED: workspace held pending cleanup confirmation')
     }
+  }
+  releaseProject({projectId,workspaceId,root}: {projectId:string; workspaceId:string; root:string}) {
+    const workspace = this.config.workspaces.find(w => w.id === workspaceId)
+    if (!workspace || resolveWorkspaceSubdir(workspace.path) !== root) throw new WorkerError('INVALID','PROJECT_BINDING_CHANGED')
+    if (this.active.size || this.cleanupRecordFailed || this.journal.verificationHolds.blocks(workspaceId,root)) throw new WorkerError('WORKSPACE_BUSY','PROJECT_CLEANUP_UNCONFIRMED')
+    this.journal.projectOccupation.release(root,projectId)
   }
   activeIds() { return [...this.active.keys()] }
   awaitRuns() { return Promise.all([...this.active.values()].map(run => run.done)) }

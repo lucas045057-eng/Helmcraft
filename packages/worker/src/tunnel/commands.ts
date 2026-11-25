@@ -31,6 +31,10 @@ export class Commands {
         case 'run.cancel': this.runs.cancel(payload); break
         case 'run.input': this.runs.provide(payload); break
         case 'worker.drain': this.runs.hubDrain = payload.drain; break
+        case 'project.release':
+          this.runs.releaseProject(payload)
+          ack.result = {releasedProject:payload.projectId}
+          break
         case 'worker.probe':
           void this.adapters.probe(payload.adapters).then(this.capabilitiesChanged, () => undefined)
           break

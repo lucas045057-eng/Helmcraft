@@ -30,6 +30,7 @@ import { existingPlan, findPlanningTask, recordPlanningTask, recordPlanResult } 
 import { beginImplementation, blockProject, executionStep, finishImplementation, managedTask, occupied, projectExecution } from './personal-execution.js'
 import { beginGate, finishGate, gatePhases, personalDispatch, planAdvice, prepareGate, stepCanDispatch } from './personal-gates.js'
 import { finishDelivery } from './personal-delivery.js'
+import { blockUnconfirmedDelivery, closeProject } from './personal-controls.js'
 
 type Effect = TaskEffect | { type: 'pointer.changed'; workerId: string; workspaceId: string } | { type: 'harness.updated' } | { type: 'verification.outcome'; status: 'passed' | 'failed' | 'unverified' | 'skipped' }
 export interface OrchestratorConfig {
@@ -697,6 +698,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     this.ctx.store.tx(db => {
       const active = db.prepare("SELECT id FROM personal_projects WHERE phase NOT IN ('done','stopped','blocked')").all() as { id: string }[]
       for (const project of active) blockProject(db, project.id, 'HUB_RESTART_INSPECT', now)
+      db.prepare("UPDATE personal_projects SET control='inspect',phase='blocked',reason='HUB_RESTART_INSPECT' WHERE control IN ('releasing','stop_requested')").run()
     })
     for (const worker of this.db.select().from(workers).all()) {
       if (worker.connection === 'offline' && this.activeRuns(worker.id).length) {
@@ -750,10 +752,14 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   }
   private async schedulePass() {
     if (this.paused) return
+    blockUnconfirmedDelivery(this.db,this.now())
     const phases = ['implementation_ready',...gatePhases]
-    const ready = this.db.prepare('SELECT id,phase FROM personal_projects WHERE phase IN ('+phases.map(()=>'?').join(',')+')').all(...phases) as { id: string; phase:string }[]
+    const closing = this.db.prepare("SELECT id FROM personal_projects WHERE control='stop_requested' OR (control='running' AND phase='acceptance_ready')").all() as {id:string}[]
+    for (const {id} of closing) void guardAsync(this.ctx,closeProject(this.ctx,id),'confirm project cleanup')
+    const ready = this.db.prepare("SELECT id,phase FROM personal_projects WHERE control='running' AND phase IN ("+phases.map(()=>'?').join(',')+')').all(...phases) as { id: string; phase:string }[]
     for (const { id,phase } of ready) {
       try {
+        if (!this.db.prepare("SELECT 1 FROM personal_projects WHERE id=? AND phase=? AND control='running'").get(id,phase)) continue
         if (phase !== 'implementation_ready') {
           const gate = prepareGate(this.db,id)
           await this.submit(gate.input,owner,{gateProject:id})
@@ -780,6 +786,8 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         if (task.status !== 'queued' || this.paused) return
         const project = findPlanningTask(this.db, task.id)
         const step = executionStep(this.db, task.id)
+        const managed = project?.id ?? step?.project_id
+        if (managed && this.db.prepare('SELECT control FROM personal_projects WHERE id=?').pluck().get(managed) !== 'running') return
         if (project && project.phase !== 'planning') return
         if (step) {
           const phase = this.db.prepare('SELECT phase FROM personal_projects WHERE id=?').pluck().get(step.project_id)
