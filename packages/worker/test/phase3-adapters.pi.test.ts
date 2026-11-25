@@ -476,8 +476,13 @@ it.runIf(win)('AD-5 Windows .cmd shim：解析出 node + 脚本；坏 shim 家�
   }
 })
 
-it.runIf(win)('AD-5 本机真实 npm shim：codex 解析到 node + codex.js（不使用 shell）', () => {
-  const resolved = resolveExe('codex')
+it.runIf(win)('AD-5 npm shim：从隔离 PATH 将 codex 解析到 node + codex.js（不使用 shell）', () => {
+  const dir = scratch()
+  const bin = join(dir, 'node_modules', '@openai', 'codex', 'bin')
+  mkdirSync(bin, { recursive: true })
+  writeFileSync(join(bin, 'codex.js'), '')
+  writeFileSync(join(dir, 'codex.cmd'), '"%_prog%" "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n')
+  const resolved = resolveExe('codex', { path: dir })
   expect(resolved.status).toBe('ready')
   if (resolved.status !== 'ready') return
   expect(resolved.exe.command.toLowerCase()).toMatch(/node(\.exe)?$/u)

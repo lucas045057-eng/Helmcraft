@@ -3,7 +3,7 @@
  * 对照 03 §6.4 受理顺序、§5 超时、§6.5 解码与截断、§5.4 背压、§9 优雅关机。
  */
 import { describe, expect, it } from 'vitest'
-import { FakeClock, backoff } from '@agent-hub/common'
+import { FakeClock, backoff, runId, taskId } from '@agent-hub/common'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { stringify } from 'yaml'
@@ -36,7 +36,10 @@ describe('WK-1 受理校验顺序（03 §6.4）', () => {
       for (const id of ['wk1-a', 'wk1-b', 'wk1-c']) await waitFor(() => hub.ctx.workers.isOnline(id), 8000, id)
 
       const expectCode = async (workerId: string, code: string, overrides: Record<string, unknown>) => {
-        const seed = seedRun(hub, workerId)
+        // These commands test Worker admission only. Persisting a refused task
+        // makes the Hub retry it on another worker and occupy the next test's slot.
+        const now = hub.ctx.clock.now()
+        const seed = { runId: runId(now), taskId: taskId(now) }
         const ack = await send(hub, workerId, command('run.dispatch', dispatchPayload(seed, overrides)))
         expect(ack.ok, 'expected refusal for ' + code).toBe(false)
         expect(ack.error?.code, JSON.stringify(overrides)).toBe(code)

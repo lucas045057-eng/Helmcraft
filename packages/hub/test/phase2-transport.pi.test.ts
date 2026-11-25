@@ -35,7 +35,7 @@ describe('GW-17 / GW-21 / GW-23 连接健康与洪泛', () => {
       const closed = worker.waitClose()
       clock.advance(15_000)
       expect(await closed).toBe(4408)
-      expect(hub.ctx.store.repos.workers.get('gw-hb')!.connection).toBe('offline')
+      await eventually(() => hub.ctx.store.repos.workers.get('gw-hb')?.connection === 'offline')
       expect(hub.ctx.store.repos.workers.get('gw-hb')!.disconnectedAt).toBe(clock.now())
       assertInvariants(hub.ctx.store.repos)
     } finally { await cleanup() }
@@ -54,7 +54,7 @@ describe('GW-17 / GW-21 / GW-23 连接健康与洪泛', () => {
       expect(await closed).toBe(4429)
       expect(worker.frames.some(frame => frame.type === 'hub.reject'
         && (frame.payload as { code?: string }).code === 'RATE_LIMITED')).toBe(true)
-      expect(hub.ctx.store.repos.workers.get('gw-flood')!.connection).toBe('offline')
+      await eventually(() => hub.ctx.store.repos.workers.get('gw-flood')?.connection === 'offline')
       assertInvariants(hub.ctx.store.repos)
     } finally { await cleanup() }
   })

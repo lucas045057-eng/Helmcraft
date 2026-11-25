@@ -123,8 +123,9 @@ it('verifies a finite process tree with native containment and drains its output
   expect(warn).not.toHaveBeenCalled()
 }, 20000)
 
-it.runIf(process.platform === 'win32').each(['normal', 'termination error'] as const)(
-  'finishes verification with a surviving Job member holding both pipes: %s', async mode => {
+const familyModes = process.platform === 'win32' ? ['normal', 'termination error'] : ['normal']
+it.runIf(['win32', 'linux'].includes(process.platform)).each(familyModes)(
+  'finishes verification with a surviving contained child holding both pipes: %s', async mode => {
     const directory = mkdtempSync(join(tmpdir(), 'verify-job-'))
     const pidFile = join(directory, 'child-pid')
     const fixtureFile = fileURLToPath(new URL('./fixtures/verify-job-family.py', import.meta.url))
@@ -152,7 +153,8 @@ it.runIf(process.platform === 'win32').each(['normal', 'termination error'] as c
       return { ...job, terminate() { throw new Error('injected termination failure') } }
     })
     try {
-      const { results, summary, cleanupUnconfirmed, log } = await runCommands(['python.exe', fixtureFile, 'parent', directory])
+      const python = process.platform === 'win32' ? 'python.exe' : 'python3'
+      const { results, summary, cleanupUnconfirmed, log } = await runCommands([python, fixtureFile, 'parent', directory])
       const returnedAt = performance.now()
       const uncertain = mode === 'termination error'
       expect(aliveAtParentExit, JSON.stringify({ descendant, first: results[0], output: log.mock.calls })).toBe(true)

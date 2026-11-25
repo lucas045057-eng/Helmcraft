@@ -19,14 +19,21 @@ const repoRoot = resolve(import.meta.dirname, '../../..')
 const cli = resolve(repoRoot, 'packages/worker/bin/agent-worker.mjs')
 
 function rssBytes(pid: number): number {
-  try {
+  let bytes: number
+  if (process.platform === 'linux') {
+    const status = readFileSync(`/proc/${pid}/status`, 'utf8')
+    bytes = Number(/^VmRSS:\s+(\d+)\s+kB$/mu.exec(status)?.[1]) * 1024
+  } else if (process.platform === 'win32') {
     const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     const out = execFileSync(powershell,
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).WorkingSet64`],
       { encoding: 'utf8', timeout: 10_000, windowsHide: true, shell: false })
-    const value = Number(out.trim())
-    return Number.isFinite(value) ? value : 0
-  } catch { return 0 }
+    bytes = Number(out.trim())
+  } else {
+    bytes = Number(execFileSync('ps', ['-o', 'rss=', '-p', String(pid)], { encoding: 'utf8', timeout: 10_000 }).trim()) * 1024
+  }
+  if (!Number.isFinite(bytes) || bytes <= 0) throw new Error(`Invalid RSS sample for PID ${pid} on ${process.platform}`)
+  return bytes
 }
 
 function processAlive(pid: number) {

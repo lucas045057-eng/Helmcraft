@@ -46,7 +46,8 @@ export function resolveWorkspaceSubdir(root: string, subdir = '.'): string {
 }
 
 export function mapWorkspaceFile(root: string, cwd: string, path: string): string {
-  const candidate = resolve(cwd, path)
+  if (/^[\\/]{2}/u.test(path)) throw new Error('File is outside the workspace')
+  const candidate = resolve(cwd, path.replaceAll('\\', '/'))
   if (!withinWorkspace(root, candidate)) throw new Error('File is outside the workspace')
   const local = relative(root, candidate)
   validateSegments(local)

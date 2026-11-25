@@ -70,13 +70,17 @@ it('SOAK-1-accelerated 60s 高密度混合浸泡（含断网重连 + Hub 重启�
   let restarts = 0
 
   const online = () => hub.ctx.store.repos.workers.get(workerId)?.connection === 'online'
-  const status = (id: string) => hub.ctx.orchestrator.getTask(id)?.status
+  // Poll only the persisted status. Rebuilding the full task detail every 10 ms
+  // would include the observer's timeline and run allocations in the RSS trend.
+  const prepareStatus = () => hub.ctx.store.repos.prepare('SELECT status FROM tasks WHERE id = ?').pluck()
+  let statusQuery = prepareStatus()
   const waitStatus = (id: string, expected: string, timeoutMs = 30_000) =>
-    eventually(() => status(id) === expected, { timeoutMs, label: id + ' → ' + expected })
+    eventually(() => statusQuery.get(id) === expected, { timeoutMs, label: id + ' → ' + expected })
 
   const restartHub = async () => {
     await hub.close()
     hub = await createTestHub({ ...base, server: { ...base.server, port } } as never, {})
+    statusQuery = prepareStatus()
     await eventually(online, { timeoutMs: 30_000, label: 'worker reconnected after hub restart' })
     restarts += 1
   }

@@ -13,7 +13,9 @@ import { trackProcessTree } from '../src/runner/kill-tree.js'
 import { processAlive, processStartTime } from '../src/runner/process-identity.js'
 
 function sleeper(ms = 30_000): ChildProcess {
-  return spawn(process.execPath, ['-e', `setTimeout(()=>{}, ${ms})`], { stdio: 'ignore', windowsHide: true })
+  return spawn(process.execPath, ['-e', `setTimeout(()=>{}, ${ms})`], {
+    stdio: 'ignore', windowsHide: true, detached: process.platform !== 'win32',
+  })
 }
 
 async function waitExit(child: ChildProcess, timeoutMs = 5000) {
@@ -56,7 +58,7 @@ it('WIN-5 PID 复用防护：journal 中 pidStartTime 不匹配时不杀无关�
   }
 }, 40_000)
 
-it('WIN-2 降级模式（关闭 Job Object）：脱离父子链的进程存活时记录 ORPHAN_SURVIVED 告警', async () => {
+it.runIf(process.platform === 'win32')('WIN-2 降级模式（关闭 Job Object）：脱离父子链的进程存活时记录 ORPHAN_SURVIVED 告警', async () => {
   const root = sleeper(20_000)
   const escaped = sleeper(20_000)
   const warnings: unknown[] = []
