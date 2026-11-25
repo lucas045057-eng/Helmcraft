@@ -6,6 +6,7 @@ export const adapterPassEnv: Record<AdapterId, string[]> = {
   codex: ['OPENAI_API_KEY', 'OPENAI_BASE_URL', 'CODEX_HOME'],
   gemini: ['GEMINI_API_KEY', 'GOOGLE_API_KEY', 'GOOGLE_CLOUD_PROJECT', 'GOOGLE_APPLICATION_CREDENTIALS'],
   opencode: ['OPENCODE_*'],
+  antigravity: ['ANTIGRAVITY_*'],
   mock: [],
 }
 const forced = { NO_COLOR: '1', FORCE_COLOR: '0', TERM: 'dumb', CI: '1', PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }

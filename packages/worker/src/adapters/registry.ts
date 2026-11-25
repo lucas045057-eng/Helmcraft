@@ -7,8 +7,9 @@ import { codexAdapter } from './codex.js'
 import { geminiAdapter } from './gemini.js'
 import { mockAdapter } from './mock.js'
 import { opencodeAdapter } from './opencode.js'
+import { antigravityAdapter } from './antigravity.js'
 const noFeatures = { resume: false, liveInput: false, structuredOutput: false }
-const defaultAdapters = [claudeCodeAdapter, codexAdapter, geminiAdapter, opencodeAdapter, mockAdapter]
+const defaultAdapters = [claudeCodeAdapter, codexAdapter, geminiAdapter, opencodeAdapter, antigravityAdapter, mockAdapter]
 
 async function probeWithTimeout(adapter: CliAdapter, config: WorkerConfig['adapters'][AdapterId]): Promise<ProbeResult> {
   const controller = new AbortController()

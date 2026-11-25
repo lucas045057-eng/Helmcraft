@@ -33,7 +33,7 @@ export const HubConfigSchema = z.strictObject({
       bytesPerSecond: ms(8 << 20) }).prefault({}), redactionPatterns: z.array(z.string().max(256)).max(64).default([]) }).prefault({}),
   orchestrator: z.strictObject({
     scheduler: z.strictObject({ tickMs: ms(2000), scanLimit: ms(200),
-      defaultAdapterOrder: z.array(AdapterId).default(['claude-code', 'codex', 'gemini', 'opencode', 'mock']),
+      defaultAdapterOrder: z.array(AdapterId).default(['claude-code', 'codex', 'gemini', 'opencode', 'antigravity', 'mock']),
       refuseBackoffMs: ms(60_000), unschedulableWarnMs: ms(60_000) }).prefault({}),
     tasks: z.strictObject({ defaultTimeoutMs: timeout.default(1_800_000), idleTimeoutMs: timeout.default(600_000),
       approvalTimeoutMs: ms(86_400_000), inputTimeoutMs: ms(3_600_000), cancelAckTimeoutMs: ms(30_000),

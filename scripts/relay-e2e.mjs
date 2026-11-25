@@ -53,8 +53,14 @@ const codexCommand = process.env.RELAY_CODEX_COMMAND ?? join(process.env.HOME ??
 if ([first, second].includes('codex') && (!existsSync(codexCommand) || !readFileSync(codexCommand, 'utf8').includes('codex-egress'))) {
   throw new Error('codex 包装脚本缺失：' + codexCommand + '（先 install -m 755 deploy/wsl/codex-egress.sh ~/.local/bin/codex-egress）')
 }
+// agy 同样走专属出口：deploy/wsl/agy-egress.sh
+const agyCommand = process.env.RELAY_AGY_COMMAND ?? join(process.env.HOME ?? '', '.local/bin/agy-egress')
+if ([first, second].includes('antigravity') && (!existsSync(agyCommand) || !readFileSync(agyCommand, 'utf8').includes('agy-egress'))) {
+  throw new Error('agy 包装脚本缺失：' + agyCommand + '（先 install -m 755 deploy/wsl/agy-egress.sh ~/.local/bin/agy-egress）')
+}
 const adapterConfig = id => id === 'claude-code' ? { enabled: true, command: claudeCommand }
-  : id === 'codex' ? { enabled: true, command: codexCommand } : { enabled: true }
+  : id === 'codex' ? { enabled: true, command: codexCommand }
+  : id === 'antigravity' ? { enabled: true, command: agyCommand } : { enabled: true }
 const config = WorkerConfigSchema.parse({ workerId, hub: { url: 'ws://127.0.0.1:' + port + '/ws/worker' },
   adapters: { [first]: adapterConfig(first), [second]: adapterConfig(second) },
   workspaces: [{ id: 'sandbox', label: 'Relay E2E', path: workspace, allowedAdapters: [first, second], maxProfile: 'edit',
@@ -63,7 +69,7 @@ const worker = await startWorker(config, { identity, stateDir: join(dir, 'worker
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 // 运行期取证：扫描 /proc 中真实 CLI 进程的环境变量，确认带 HTTPS_PROXY（不打印代理值）
-const egressPatterns = { 'claude-code': /claude-code\/bin\/claude(\.exe)?$/, codex: /@openai\/codex.*\/bin\/codex(\.js)?$|^\/usr\/local\/bin\/codex$/ }
+const egressPatterns = { 'claude-code': /claude-code\/bin\/claude(\.exe)?$/, codex: /@openai\/codex.*\/bin\/codex(\.js)?$|^\/usr\/local\/bin\/codex$/, antigravity: /\/\.local\/bin\/agy$/ }
 const egressBy = Object.fromEntries(Object.keys(egressPatterns).map(id => [id, { seen: 0, proxied: 0, direct: 0 }]))
 const egressPids = new Set()
 const egressTimer = setInterval(() => {

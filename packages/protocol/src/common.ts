@@ -11,7 +11,7 @@ export const WorkerId = z.string().regex(WORKER_ID_PATTERN)
 export const WorkspaceId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/)
 export const TaskRef = z.union([TaskId, z.string().regex(/^#?\d+$/)])
 
-export const AdapterId = z.enum(['claude-code', 'codex', 'gemini', 'opencode', 'mock'])
+export const AdapterId = z.enum(['claude-code', 'codex', 'gemini', 'opencode', 'antigravity', 'mock'])
 export const Profile = z.enum(['readonly', 'edit', 'full'])
 export const Source = z.enum(['feishu', 'dashboard', 'api'])
 export const ActorType = z.enum(['owner', 'requester', 'system', 'worker'])
