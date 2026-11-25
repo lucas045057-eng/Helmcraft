@@ -7,7 +7,7 @@ import { composeRun } from '../harness/compose-run.js'
 import { readBoard, readAgentsMd } from '../harness/board-reader.js'
 import { capturePost, computeApplied, type HarnessSession } from '../harness/session.js'
 import { join } from 'node:path'
-import { mapWorkspaceFile, resolveWorkspaceSubdir, workspaceSubdirPath } from '../security/workspace.js'
+import { mapWorkspaceFile, resolveWorkspaceSubdir, withinWorkspace, workspaceSubdirPath } from '../security/workspace.js'
 import { boundLogLine, createRedactor, Lru, NdjsonLineSplitter, ulid } from '@agent-hub/common'
 import type { Clock, SplitLine } from '@agent-hub/common'
 import type { CmdAckPayload, RunCancel, RunDispatch, RunInput, RunResumeState, VerificationSummary } from '@agent-hub/protocol'
@@ -29,6 +29,7 @@ import { createRunTempDir, recoverRunTempFiles, removeRunTempDir, writeRunTempFi
 type Code = NonNullable<CmdAckPayload['error']>['code']
 type StopReason = 'TIMEOUT' | 'IDLE_TIMEOUT' | 'INPUT_TIMEOUT' | 'CANCELLED' | 'WORKER_SHUTDOWN'
 interface ActiveRun {
+  workspacePath: string
   harness?: HarnessSession
   command: RunDispatch
   state: Exclude<RunResumeState['state'], 'finished'>
@@ -99,18 +100,18 @@ export class RunManager {
   // Wire admission verifies physical paths and persists acceptance before cmd.ack.
   accept(command: RunDispatch, hubNow: number): () => void {
     const plan = this.planReservation(command, hubNow, resolveWorkspaceSubdir)
-    this.recordAcceptance(command)
+    this.recordAcceptance(command, plan.run.workspacePath)
     return plan.activate()
   }
-  private recordAcceptance(command: RunDispatch) {
-    this.journal.accepted({ runId: command.runId, taskId: command.taskId, workspaceId: command.workspaceId })
+  private recordAcceptance(command: RunDispatch, workspaceRoot: string) {
+    this.journal.accepted({ runId: command.runId, taskId: command.taskId, workspaceId: command.workspaceId, workspaceRoot })
   }
   // An in-process reservation claims the slot synchronously. Its launch owns all I/O.
   reserve(command: RunDispatch, hubNow: number): () => void {
     const plan = this.planReservation(command, hubNow, workspaceSubdirPath)
     const launch = plan.activate()
     return () => {
-      try { this.recordAcceptance(command) }
+      try { this.recordAcceptance(command, plan.run.workspacePath) }
       catch {
         this.finish(plan.run, { kind: 'finished', status: 'failed', errorCode: 'SPAWN_ERROR', exitCode: null,
           signal: null, durationMs: 0, summary: 'Could not persist run acceptance' })
@@ -133,7 +134,10 @@ export class RunManager {
       !workspace.allowedAdapters.includes(command.adapter) || (command.resume && !probe.adapter.features.resume)) throw new WorkerError('ADAPTER_UNAVAILABLE')
     const profile = effectiveProfile(command.profile, workspace.maxProfile, workspace.strictProfile)
     if (!profile) throw new WorkerError('PROFILE_NOT_ALLOWED')
-    const other = [...this.active.values()].filter(run => run.command.workspaceId === workspace.id)
+    if (profile.effectiveProfile !== 'readonly') this.checkWriter(workspace.id, workspace.path)
+    const other = [...this.active.values()].filter(run => run.command.workspaceId === workspace.id ||
+      (profile.effectiveProfile !== 'readonly' &&
+        withinWorkspace(run.workspacePath, workspace.path) && withinWorkspace(workspace.path, run.workspacePath)))
     if (profile.effectiveProfile === 'readonly'
       ? other.filter(run => run.profile.effectiveProfile === 'readonly').length >= workspace.maxConcurrent
       : other.some(run => run.profile.effectiveProfile !== 'readonly')) throw new WorkerError('WORKSPACE_BUSY')
@@ -155,7 +159,7 @@ export class RunManager {
     const reservedEnv = new Set(Object.keys(invocation.env).map(key => key.toUpperCase()))
     const { env, knownSecrets } = buildEnvironment(process.env, { ...adapterConfig, env: { ...adapterConfig.env, ...invocation.env } },
       command.env, this.config.security.allowedEnvOverrideKeys.filter(key => !reservedEnv.has(key.toUpperCase())))
-    const run: ActiveRun = { command, profile, state: 'starting', started: this.clock.monotonic(), lastOutput: this.clock.monotonic(),
+    const run: ActiveRun = { command, profile, workspacePath: workspace.path, state: 'starting', started: this.clock.monotonic(), lastOutput: this.clock.monotonic(),
       abort: new AbortController(), grace: new AbortController(), discard: false, ...this.completion() }
     if (command.harness && this.config.harness.enabled) {
       run.harness = { applied: computeApplied(command.harness, workspace.harness, profile.effectiveProfile, workspace.configExposed), round: 0, epochPre: 0, writerActive: false }
@@ -290,6 +294,7 @@ export class RunManager {
       run.aggregate = aggregateRound(run.aggregate, finished)
       const aggregate = run.aggregate
       let verification: VerificationSummary | undefined
+      let verificationHeld = false
       let attempts = round
       const deadline = run.started + run.command.timeoutMs
       const interrupted = (): VerificationSummary | undefined => {
@@ -318,15 +323,21 @@ export class RunManager {
             attempts++
             checkpoint()
             run.grace = new AbortController()
-            const { summary, results } = await verifyAttempt({ clock: this.clock, root, runId: id, deadline, signal: run.abort.signal,
+            const confirmCleanup = this.journal.verificationHolds.begin(id, workspace, root)
+            verificationHeld = true
+            const { summary, results, cleanupUnconfirmed } = await verifyAttempt({ clock: this.clock, root, runId: id, deadline, signal: run.abort.signal,
               force: run.grace.signal, warn: this.warn, knownSecrets, patterns: this.patterns, journal: this.journal, useJobObject: this.config.security.useJobObject,
               emit: ev => this.outbox.push(id, ev), log: (stream, text) => {
                 append(text + '\n')
                 this.outbox.push(id, { kind: 'log', stream, ...boundLogLine({ text }, logLimit) })
               } }, localHarness.verify, attempts)
+            if (!cleanupUnconfirmed) {
+              confirmCleanup()
+              verificationHeld = false
+            }
             try { local?.flush() } catch { this.warn('Local verification log flush failed') }
             verification = summary
-            const facts = nextRepair(summary, results, event.changes, round, session.applied.autoFixMaxRetries, deadline - this.clock.monotonic(), run.command.timeoutMs)
+            const facts = !verificationHeld && nextRepair(summary, results, event.changes, round, session.applied.autoFixMaxRetries, deadline - this.clock.monotonic(), run.command.timeoutMs)
             if (facts && !interrupted()) {
               const resume = probe.adapter?.features.resume && aggregate.cliSessionId && !aggregate.cliSessionId.startsWith('-') ? aggregate.cliSessionId : undefined
               const repairBoard = !resume && session.applied.board !== 'off' ? await readBoard(root, knownSecrets, this.patterns) : post
@@ -349,6 +360,9 @@ export class RunManager {
       } catch {
         this.warn('Harness post capture, verification or journal write failed')
         if (requested && aggregate.status === 'succeeded') verification = interrupted() ?? { status: 'unverified', reason: 'INTERNAL', attempts, failed: [] }
+      }
+      if (verificationHeld) {
+        this.outbox.push(id, { kind: 'log', stream: 'system', text: 'VERIFY_CLEANUP_UNCONFIRMED: workspace quarantined; new writers blocked' })
       }
       if (round && verification && !verification.autoFix) {
         const stoppedBy = verification.status === 'passed' ? 'PASSED' : verification.reason === 'TAMPER_RISK' ? 'TAMPER_RISK'
@@ -390,6 +404,7 @@ export class RunManager {
       local = new LocalLog(this.logRoot, id, this.config.localLogs.maxBytesPerRun)
       const verified = resolveWorkspaceSubdir(root, run.command.subdir)
       if (verified !== cwd) throw new Error('Working directory changed before spawn')
+      if (run.profile.effectiveProfile !== 'readonly') this.checkWriter(run.command.workspaceId, root)
       if (invocation.tempFiles?.length) {
         tempDir = createRunTempDir(this.tempRoot)
         writeRunTempFiles(tempDir, invocation, env)
@@ -538,6 +553,11 @@ export class RunManager {
       if (run.state === 'cancelling') continue
       if (time - run.started >= run.command.timeoutMs) this.stop(run, 'TIMEOUT', false)
       else if (!run.pauseIdle && time - run.lastOutput >= run.command.idleTimeoutMs) this.stop(run, 'IDLE_TIMEOUT', false)
+    }
+  }
+  private checkWriter(workspaceId: string, path: string) {
+    if (this.journal.verificationHolds.blocks(workspaceId, path)) {
+      throw new WorkerError('WORKSPACE_BUSY', 'VERIFY_CLEANUP_UNCONFIRMED: workspace held pending cleanup confirmation')
     }
   }
   activeIds() { return [...this.active.keys()] }

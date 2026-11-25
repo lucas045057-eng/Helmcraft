@@ -5,10 +5,11 @@ import type { Clock } from '@agent-hub/common'
 import { aggregateRound } from '../harness/autofix.js'
 import { trackProcessTree } from './kill-tree.js'
 import { processStartTime } from './process-identity.js'
+import { VerificationHolds } from './verification-holds.js'
 
 type Finished = Extract<RunEvent, { kind: 'finished' }>
 interface CliExited { round: number; verifyRequested: boolean; verifyAttempts: number; outcome: Omit<Finished, 'seq' | 'ts' | 'verification'> }
-interface Entry { cliExited?: CliExited; runId: string; taskId: string; workspaceId: string; pid?: number; pidStartTime?: string; lastSeq?: number; finished?: Finished }
+interface Entry { cliExited?: CliExited; runId: string; taskId: string; workspaceId: string; workspaceRoot?: string; pid?: number; pidStartTime?: string; processRole?: 'cli' | 'verify'; lastSeq?: number; finished?: Finished }
 type RecordEntry =
   | ({ type: 'run.accepted' } & Omit<Entry, 'finished' | 'cliExited'>)
   | { type: 'run.process'; runId: string; pid: number; pidStartTime?: string; role: 'cli' | 'verify' }
@@ -18,8 +19,10 @@ type RecordEntry =
   | { type: 'run.acked'; runId: string }
 export class Journal {
   private readonly records = new Map<string, Entry>()
+  readonly verificationHolds: VerificationHolds
   constructor(private readonly path: string, private readonly clock: Clock) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    this.verificationHolds = new VerificationHolds(path + '.verification.json')
     if (!existsSync(path)) return
     for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
       if (!line.trim()) continue
@@ -35,6 +38,7 @@ export class Journal {
       const entry = this.records.get(record.runId)
       if (entry && Number.isSafeInteger(record.pid) && record.pid > 0) {
         entry.pid = record.pid
+        entry.processRole = record.role
         delete entry.pidStartTime
         if (record.pidStartTime) entry.pidStartTime = record.pidStartTime
       }
@@ -81,6 +85,11 @@ export class Journal {
   async recover(onWarning?: (error: unknown) => void) {
     for (const entry of this.records.values()) {
       if (entry.finished) continue
+      if (entry.processRole === 'verify' || (entry.cliExited?.verifyAttempts ?? 0) > 0) {
+        // A legacy workspace ID may have been rebound since the crash. Only
+        // trust the path from admission or the pre-spawn verification record.
+        this.verificationHolds.recover(entry.runId, entry.workspaceId, entry.workspaceRoot)
+      }
       if (entry.pid && entry.pid !== process.pid && entry.pidStartTime && processStartTime(entry.pid) === entry.pidStartTime) {
         try {
           const tree = trackProcessTree(entry.pid, { useJobObject: false, ...(onWarning && { onWarning }) })

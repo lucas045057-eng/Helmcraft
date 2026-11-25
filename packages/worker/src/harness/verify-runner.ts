@@ -124,6 +124,7 @@ export async function verifyAttempt(ctx: Context, config: Workspace['harness']['
     try { execution = await execute(cmd, ctx, deadline) }
     catch {
       ctx.warn('Could not supervise verification command', 'VERIFY_PROCESS_ERROR')
+      cleanupUnconfirmed = true
       aborted = 'INTERNAL'
       results.push({ id: cmd.id, status: 'unavailable', exitCode: null, signal: null, durationMs: 0, tail: 'Verification process supervision failed' })
       continue
