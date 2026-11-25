@@ -44,8 +44,20 @@ describe('antigravity adapter', () => {
     const text = items.flatMap(item => item.kind === 'agent' && item.event.type === 'message' ? [item.event.text] : []).join('')
     expect(text).toBe('Updating a.txt\n')
     const outcome = parser.finish({ code: 0, signal: null, timedOut: false, cancelled: false })
-    expect(outcome).toMatchObject({ status: 'succeeded', summary: 'Appended `world` to a.txt.\n', cliSessionId: cid,
+    expect(outcome).toMatchObject({ status: 'succeeded', summary: 'Appended `world` to a.txt.', cliSessionId: cid,
       usage: { inputTokens: 16614, outputTokens: 620, cacheReadTokens: 23270 }, filesChanged: ['/tmp/ws/a.txt'] })
+  })
+
+  it('falls back to streamed text and reports denied actions when response is empty', () => {
+    const parser = antigravityAdapter.createParser()
+    parser.onStdout(step({ step_index: 1, state: 'DONE', step_type: 'agent_response', text_delta: 'Implemented divide.\n' }))
+    const items = parser.onStdout(JSON.stringify({ event: 'result', result: { conversation_id: cid, status: 'SUCCESS', response: '',
+      num_turns: 1, denied_actions: [{ action: 'command', display_name: 'Bash' }] } }))
+    expect(items).toContainEqual(expect.objectContaining({ kind: 'agent', event: expect.objectContaining({ type: 'error', fatal: false }) }))
+    const outcome = parser.finish({ code: 0, signal: null, timedOut: false, cancelled: false })
+    expect(outcome.status).toBe('succeeded')
+    expect(outcome.summary).toContain('Implemented divide.')
+    expect(outcome.summary).toContain('Bash')
   })
 
   it('reports an ERROR result as a failed run', () => {

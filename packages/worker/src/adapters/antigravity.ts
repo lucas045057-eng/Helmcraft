@@ -15,7 +15,7 @@ const deltaWindowChars = 8000
 
 function createParser() {
   const state = new ParserState()
-  let pending = '', pendingSince = 0
+  let pending = '', pendingSince = 0, streamed = ''
   const flush = (force: boolean): ParsedItem[] => {
     if (!pending || (!force && Date.now() - pendingSince < deltaWindowMs)) return []
     const text = pending
@@ -43,6 +43,7 @@ function createParser() {
             const items = flush(pending.length + text.length > deltaWindowChars)
             if (!pending) pendingSince = Date.now()
             pending += text
+            streamed = (streamed + text).slice(-20_000)
             if (step.state === 'DONE' || pending.length >= deltaWindowChars || text.includes('\n')) items.push(...flush(true))
             return items
           }
@@ -71,8 +72,13 @@ function createParser() {
         if (!result) return
         const id = sessionId(result.conversation_id)
         const items = withPending(id ? state.session(id) : [])
-        const response = str(result.response)
-        if (response) state.summary = response.slice(0, 20_000)
+        // headless 模式下无法弹窗授权的操作会被自动拒绝（如 edit 档里的终端命令），response 可能因此为空
+        const denied = Array.isArray(result.denied_actions)
+          ? [...new Set(result.denied_actions.map(row).map(action => str(action?.display_name) ?? str(action?.action)).filter(Boolean))] : []
+        const deniedNote = denied.length ? 'Antigravity 自动拒绝了需要授权的操作：' + denied.join('、') + '（headless 模式无法弹窗授权；需要时改用 full 档）' : ''
+        const response = str(result.response)?.trim() ? str(result.response)! : streamed
+        state.summary = [response.trim(), deniedNote].filter(Boolean).join('\n\n').slice(0, 20_000)
+        if (deniedNote) items.push(...state.error(deniedNote, false))
         const usage = row(result.usage)
         if (usage) items.push(...state.reportUsage(usageFields(usage.input_tokens, usage.output_tokens, usage.cache_read_tokens)))
         if (result.status !== 'SUCCESS') {
