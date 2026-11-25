@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, type ChildProcess } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
@@ -12,6 +12,7 @@ const PROCESS_TERMINATE_AND_SET_QUOTA = 0x0001 | 0x0100
 
 interface Job {
   terminate(): void
+  empty(): boolean
   close(): void
 }
 
@@ -58,6 +59,7 @@ function loadJobApi() {
   const open = kernel.func('void * __stdcall OpenProcess(uint32_t, int, uint32_t)')
   const assign = kernel.func('int __stdcall AssignProcessToJobObject(void *, void *)')
   const terminate = kernel.func('int __stdcall TerminateJobObject(void *, uint32_t)')
+  const query = kernel.func('int __stdcall QueryInformationJobObject(void *, int, void *, uint32_t, void *)')
   const closeHandle = kernel.func('int __stdcall CloseHandle(void *)')
   const lastError = kernel.func('uint32_t __stdcall GetLastError()')
   const fail = (operation: string): never => { throw new Error(operation + ' failed with Win32 error ' + lastError()) }
@@ -83,6 +85,13 @@ function loadJobApi() {
         }
       }
       return {
+        empty() {
+          // JOBOBJECT_BASIC_ACCOUNTING_INFORMATION.ActiveProcesses follows four
+          // LARGE_INTEGER fields and two DWORD counters.
+          const accounting = Buffer.alloc(48)
+          if (!query(handle, 1, accounting, accounting.length, null)) fail('QueryInformationJobObject')
+          return accounting.readUInt32LE(40) === 0
+        },
         terminate() {
           if (!closed && !terminate(handle, 1)) fail('TerminateJobObject')
         },
@@ -118,6 +127,50 @@ function killGroup(pid: number, signal: NodeJS.Signals): void {
     process.kill(-pid, signal)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+  }
+}
+
+/** Non-blocking tree operations for the verification deadline. The ordinary CLI
+ * tracker also inventories Windows processes, which can block on PowerShell. */
+export function trackVerificationTree(child: ChildProcess, useJobObject: boolean, warn: (error: unknown) => void) {
+  const pid = child.pid!
+  if (!Number.isSafeInteger(pid) || pid <= 0 || pid === process.pid) throw new RangeError('invalid child PID')
+  let job: Job | undefined
+  if (process.platform === 'win32') {
+    if (useJobObject) {
+      try {
+        createJob ??= loadJobApi()
+        job = createJob(pid)
+      } catch (error) { warn(error) }
+    } else {
+      warn(new Error('Verification Job Object disabled'))
+    }
+  }
+  const startTime = processStartTime(pid)
+  return {
+    startTime,
+    terminate(force: boolean) {
+      if (process.platform === 'win32') {
+        if (job) job.terminate()
+        else child.kill() // Node retains the original Windows process handle.
+      } else {
+        // While the leader is still running its PID cannot have been reused.
+        // After exit a newly-created leader must never receive this group's signal.
+        if (child.exitCode !== null || child.signalCode !== null) {
+          if (processAlive(pid)) throw new Error('Verification process group identity changed')
+        }
+        killGroup(pid, force ? 'SIGKILL' : 'SIGTERM')
+      }
+    },
+    empty() {
+      if (process.platform === 'win32') return job?.empty() ?? false
+      try { process.kill(-pid, 0); return false }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ESRCH') return true
+        throw error
+      }
+    },
+    close() { job?.close() },
   }
 }
 
