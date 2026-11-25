@@ -54,6 +54,7 @@ export const RunEvent = z.discriminatedUnion('kind', [
       'CANCELLED', 'WORKER_SHUTDOWN', 'WORKER_RESTARTED', 'INPUT_TIMEOUT']).optional(),
     errorMessage: z.string().max(2000).optional(),
     summary: z.string().max(20000),                   // 最终回复正文（已脱敏）
+    personalResultDigest: z.string().regex(/^[0-9a-f]{64}$/u).optional(),
     cliSessionId: z.string().max(256).optional(),
     usage: z.strictObject({
       inputTokens: z.number().int().optional(), outputTokens: z.number().int().optional(),

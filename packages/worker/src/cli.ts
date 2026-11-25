@@ -11,6 +11,7 @@ import { WorkerConfigSchema } from './config/schema.js'
 import { loadIdentity } from './identity.js'
 import { WorkerAlreadyRunning } from './runner/lock.js'
 import { doctor } from './doctor.js'
+import { preflight } from './personal/preflight.js'
 import { installTask, uninstallTask } from './scheduled-task.js'
 
 export async function main(args = process.argv.slice(2)) {
@@ -20,6 +21,18 @@ export async function main(args = process.argv.slice(2)) {
   } })
   const path = resolve(values.config ?? defaultWorkerConfig)
   switch (positionals[0]) {
+    case 'personal-preflight': {
+      const config = loadWorkerConfig(path)
+      try {
+        const binding = await preflight(config, positionals[1] ?? '', new AdapterRegistry(config))
+        console.log(JSON.stringify({ ok: true, binding }))
+        return 0
+      } catch (error) {
+        const cause = error instanceof Error ? error.message : 'Personal preflight failed'
+        console.log(JSON.stringify({ ok: false, reason: cause.startsWith('Command failed:') ? 'Could not confirm Git binding' : cause }))
+        return 1
+      }
+    }
     case 'doctor': {
       const report = await doctor(path, { dumpHelp: values['dump-help'] ?? false, checkHub: values['check-hub'] ?? false })
       console.log(JSON.stringify(report, null, 2))

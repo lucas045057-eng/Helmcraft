@@ -1,4 +1,5 @@
 import { stripVTControlCharacters } from 'node:util'
+import { createHash } from 'node:crypto'
 import { scanManifest } from '../harness/manifest.js'
 import { sensitivePaths } from '../harness/tamper.js'
 import { verifyAttempt } from '../harness/verify-runner.js'
@@ -17,6 +18,9 @@ import type { ParsedItem, OutputParser, Invocation } from '../adapters/types.js'
 import { effectiveProfile } from '../security/profile.js'
 import { buildEnvironment } from '../security/env.js'
 import { filterExtraArgs } from '../security/args.js'
+import { assertBinding, personalBinding } from '../personal/preflight.js'
+import { checkPersonalRole, personalInvocation } from '../personal/roles.js'
+import { PersonalResult } from '../personal/result.js'
 import { type AdapterRegistry } from '../adapters/registry.js'
 import { RunOutbox } from '../tunnel/outbox.js'
 import { trackProcessTree } from './kill-tree.js'
@@ -134,6 +138,17 @@ export class RunManager {
       !workspace.allowedAdapters.includes(command.adapter) || (command.resume && !probe.adapter.features.resume)) throw new WorkerError('ADAPTER_UNAVAILABLE')
     const profile = effectiveProfile(command.profile, workspace.maxProfile, workspace.strictProfile)
     if (!profile) throw new WorkerError('PROFILE_NOT_ALLOWED')
+    const personal = command.personal
+    const checkBinding = () => {
+      if (!personal) return
+      try {
+        checkPersonalRole(personal.role, command)
+        if (profile.effectiveProfile !== command.profile || (personal.role !== 'main' && command.harness) ||
+          command.harness?.verify?.autoFixMaxRetries) throw new Error('Invalid role profile')
+        assertBinding(personal.binding, personalBinding(this.config, workspace.id, this.registry))
+      } catch { throw new WorkerError('INVALID', 'Personal role or repository binding rejected') }
+    }
+    checkBinding()
     if (profile.effectiveProfile !== 'readonly') this.checkWriter(workspace.id, workspace.path)
     const other = [...this.active.values()].filter(run => run.command.workspaceId === workspace.id ||
       (profile.effectiveProfile !== 'readonly' &&
@@ -153,7 +168,7 @@ export class RunManager {
         delete input.resumeSessionId
         if (repair.resume) input.resumeSessionId = repair.resume
       }
-      return adapter.buildInvocation(input)
+      return personal ? personalInvocation(personal.role, adapter, input) : adapter.buildInvocation(input)
     }
     const invocation = build(command.prompt)
     const reservedEnv = new Set(Object.keys(invocation.env).map(key => key.toUpperCase()))
@@ -170,7 +185,7 @@ export class RunManager {
       this.reporting.add(command.runId)
       this.outbox.register(command.runId, command.taskId)
       return () => void this.launch(run, invocation, build, workspace.path, cwd, env, knownSecrets, adapter.createParser(),
-        adapter.features.liveInput, probe.result.version, adapterConfig.stderrEncoding)
+        adapter.features.liveInput, probe.result.version, adapterConfig.stderrEncoding, checkBinding)
     }
     return { run, activate }
   }
@@ -181,7 +196,8 @@ export class RunManager {
   }
   private advanceEpoch(id: string) { this.writeEpoch.set(id, (this.writeEpoch.get(id) ?? 0) + 1) }
   private async launch(run: ActiveRun, invocation: Invocation, build: (prompt: string, repair?: { resume?: string }) => Invocation, root: string, cwd: string, env: NodeJS.ProcessEnv,
-    knownSecrets: Record<string, string>, parser: OutputParser, liveInput: boolean, cliVersion: string | undefined, stderrEncoding: 'utf8' | 'gbk') {
+    knownSecrets: Record<string, string>, parser: OutputParser, liveInput: boolean, cliVersion: string | undefined, stderrEncoding: 'utf8' | 'gbk',
+    checkBinding: () => void = () => {}) {
     const id = run.command.runId
     const stopped = () => {
       if (run.harness && this.clock.monotonic() - run.started >= run.command.timeoutMs) run.stop ??= 'TIMEOUT'
@@ -255,7 +271,9 @@ export class RunManager {
       catch { this.warn('Run reported a file outside the workspace', 'PATH_REJECTED'); return '<outside-workspace>' }
     }
     const logLimit = Math.min(16 * 1024, this.maxLogEntryBytes)
-    const stdout = new NdjsonLineSplitter(Math.max(1, logLimit - 64)), stderr = new NdjsonLineSplitter(Math.max(1, logLimit - 64))
+    const personalResult = run.command.personal && new PersonalResult(run.command.personal.role)
+    const stdout = new NdjsonLineSplitter(personalResult ? 256 * 1024 : Math.max(1, logLimit - 64))
+    const stderr = new NdjsonLineSplitter(Math.max(1, logLimit - 64))
     const stderrDecoder = stderrEncoding === 'gbk' ? new TextDecoder('gbk') : undefined
     let local: LocalLog | undefined
     const append = (text: string) => {
@@ -282,9 +300,21 @@ export class RunManager {
       }
       const stop = cliExited ? stopAtExit : run.stop
       const outcome = parser.finish({ code, signal, timedOut: stop === 'TIMEOUT' || stop === 'IDLE_TIMEOUT', cancelled: !!stop }, item)
+      if (personalResult && outcome.status === 'succeeded') {
+        const text = personalResult.finish()
+        if (text !== undefined && treeClosed) outcome.summary = text
+        else {
+          outcome.status = 'failed'
+          outcome.errorCode = 'ADAPTER_ERROR'
+          outcome.summary = 'Personal role result or process cleanup unconfirmed'
+        }
+      }
       const { filesChanged, ...result } = outcome
+      const scrubbedSummary = freshScrub(result.summary)
       const finished: Extract<Parameters<RunOutbox['push']>[1], { kind: 'finished' }> = { kind: 'finished', ...result, exitCode: code, signal, durationMs: Math.floor(this.clock.monotonic() - run.started),
-        summary: freshScrub(result.summary).slice(0, 20_000),
+        summary: scrubbedSummary.slice(0, 20_000),
+        ...(personalResult && result.status === 'succeeded' &&
+          { personalResultDigest: createHash('sha256').update(scrubbedSummary).digest('hex') }),
         ...(result.errorMessage && { errorMessage: freshScrub(result.errorMessage).slice(0, 2000) }),
         ...(filesChanged && { filesChanged: filesChanged.slice(0, 200).map(mapFile) }),
         ...(stop && { errorCode: stop }), ...(spawnError && !stop && { status: 'failed', errorCode: 'SPAWN_ERROR' }) }
@@ -392,6 +422,7 @@ export class RunManager {
       } else this.outbox.push(id, entry.kind === 'log' ? { ...entry, ...boundLogLine({ text: entry.text, ...(truncatedBytes && { truncatedBytes }) }, logLimit) } : entry)
     }
     const processLine = (stream: 'stdout' | 'stderr', line: SplitLine) => {
+      if (stream === 'stdout') personalResult?.observe(line.text, !!line.truncatedBytes)
       const clean = scrub(stream, line.text)
       if (stream === 'stdout' && run.command.adapter === 'mock' && run.tree?.mode === 'taskkill') {
         const tracked = /^\{"type":"pid","pid":(\d+),"ppid":\d+\}$/.exec(clean)
@@ -404,6 +435,7 @@ export class RunManager {
       local = new LocalLog(this.logRoot, id, this.config.localLogs.maxBytesPerRun)
       const verified = resolveWorkspaceSubdir(root, run.command.subdir)
       if (verified !== cwd) throw new Error('Working directory changed before spawn')
+      checkBinding()
       if (run.profile.effectiveProfile !== 'readonly') this.checkWriter(run.command.workspaceId, root)
       if (invocation.tempFiles?.length) {
         tempDir = createRunTempDir(this.tempRoot)
@@ -425,6 +457,7 @@ export class RunManager {
         run.grace.abort()
         void stopTree()
         drainTimer = setTimeout(() => {
+          if (personalResult) run.treeCleanupFailed = true
           this.outbox.push(id, { kind: 'log', stream: 'system', text: 'CLI pipe drain timed out; closing stdout and stderr' })
           child.stdout.destroy()
           child.stderr.destroy()

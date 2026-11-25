@@ -2,7 +2,15 @@ import { HarnessDirective } from './harness.js'
 import { z } from 'zod'
 import { AdapterId, FrameId, Profile, RunId, TaskId } from '../common.js'
 import { RunResumeState } from './handshake.js'
+export const PersonalBinding = z.strictObject({
+  workerId: z.string().min(1), workspaceId: z.string().min(1),
+  root: z.string().min(1), branch: z.string().min(1), remote: z.string().min(1), ref: z.string().startsWith('refs/heads/'),
+  destination: z.string().regex(/^[0-9a-f]{64}$/u),
+  executables: z.strictObject({ main: z.string().min(1), reviewer: z.string().min(1), advisor: z.string().min(1) }),
+})
+export type PersonalBinding = z.infer<typeof PersonalBinding>
 export const RunDispatch = z.strictObject({
+  personal: z.strictObject({ role: z.enum(['main', 'reviewer', 'advisor']), binding: PersonalBinding }).optional(),
   harness: HarnessDirective.optional(),
   taskId: TaskId, runId: RunId, taskNo: z.number().int(), attempt: z.number().int().positive(),
   adapter: AdapterId,

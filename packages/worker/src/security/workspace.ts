@@ -1,4 +1,4 @@
-import { realpathSync, statSync } from 'node:fs'
+import { lstatSync, realpathSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve, sep, win32 } from 'node:path'
 
 const reserved = /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:[ .]*\.|$)/iu
@@ -47,7 +47,12 @@ export function resolveWorkspaceSubdir(root: string, subdir = '.'): string {
 
 export function mapWorkspaceFile(root: string, cwd: string, path: string): string {
   if (/^[\\/]{2}/u.test(path)) throw new Error('File is outside the workspace')
-  const candidate = resolve(cwd, path.replaceAll('\\', '/'))
+  // A POSIX file can have a literal backslash in its name. Prefer that entry
+  // when present, while accepting portable CLI paths when it is absent.
+  const native = resolve(cwd, path)
+  const literal = process.platform !== 'win32' && path.includes('\\') && withinWorkspace(root, native) &&
+    lstatSync(native, { throwIfNoEntry: false })
+  const candidate = literal ? native : resolve(cwd, path.replaceAll('\\', '/'))
   if (!withinWorkspace(root, candidate)) throw new Error('File is outside the workspace')
   const local = relative(root, candidate)
   validateSegments(local)
@@ -58,7 +63,7 @@ export function mapWorkspaceFile(root: string, cwd: string, path: string): strin
     try {
       const real = realpathSync.native(probe)
       if (!withinWorkspace(root, real)) throw new Error('File resolves outside the workspace')
-      return local.replaceAll('\\', '/')
+      return literal ? local : local.replaceAll('\\', '/')
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || probe === root) throw error
       probe = dirname(probe)
