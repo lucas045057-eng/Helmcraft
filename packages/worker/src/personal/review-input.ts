@@ -64,7 +64,9 @@ export function roleInput(root: string, command: RunDispatch) {
     planBaseline(root,spec,false)
     const after = inspectChanges(root)
     if (before.head !== after.head || before.tree !== after.tree || before.indexTree !== after.indexTree) throw new Error('Role input changed')
-    const value: unknown = JSON.parse(text)
+    // Claude can format a single complete judgment as a Markdown JSON block.
+    const fenced = gate.kind === 'review' && /^```json\r?\n([\s\S]*)\r?\n```$/u.exec(text.trim())
+    const value: unknown = JSON.parse(fenced ? fenced[1]! : text)
     const judgment = gate.kind === 'review' ? ReviewJudgment.parse(value) : gate.kind === 'debug' ? DebugJudgment.parse(value) : AdvisorJudgment.parse(value)
     return GateReceipt.parse({ taskId:command.taskId,runId:command.runId,itemId:spec.item.id,kind:gate.kind,ordinal:gate.ordinal,
       head:before.head,tree:before.tree,inputDigest:digest(prompt),judgment })

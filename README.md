@@ -30,6 +30,28 @@ pnpm -r build
 
 每次启动会在系统临时目录创建独立工作区、SQLite 数据库和 Worker 身份，注册一个本机 Worker。访问终端打印的 `http://127.0.0.1:8080`，用同一终端的一次性显示口令登录。面板的 Worker 应显示在线且适配器就绪。需要比较两种模式时，先按 Ctrl+C 释放端口。目录保留在终端显示的工作区上一级，便于检查日志。
 
+## WSL2 个人项目
+
+在 Ubuntu-24.04 WSL2 中，使用一个已注册的 Worker 和一个 Git 工作区。工作区需要干净的当前分支、已推送的上游、可提交的 Git 身份、已跟踪的 Markdown 需求文件，以及尚未创建的 TASKS.md。Worker 配置放在项目外，在工作区的 `harness.verify.commands` 中登记本项目的必需测试 ID 和 argv。允许 `codex`、`claude-code`、`antigravity` 三个适配器，工作区使用 edit 权限。对应的实际命令为 codex、claude 和 agy。
+
+在该 Worker 的 WSL2 用户下完成三种 CLI 登录。当前接入版本为 Codex 0.166.0、Claude Code 2.1.318 和 agy 1.5.17。构建后运行预检，将输出保存到项目外。下面以工作区 ID `project` 为例。
+
+```sh
+node packages/worker/bin/agent-worker.mjs personal-preflight project --config ~/agent-worker/worker.yaml > ~/personal-preflight.json
+```
+
+Worker 在线后，在指挥台的「个人项目」点击「启动项目」，填写项目 ID、需求文件名并选择预检文件。「任务与日志」打开当前调用的现场。「暂停派发」允许在途工作收尾，「停止项目」等待 Worker 确认清理。若交付结果待核查，面板保留原因和日志。点击「生成报告快照」，将三份 Markdown 下载到项目目录外。验收时核对清单中的提交和远端分支。
+
+可以用独立的 Git 交付清单需求复验整个流程。下列命令复用指定 Worker 配置中的 CLI 设置，在独立目录创建本地 Hub、Worker 状态、项目和 bare 远端。每次运行都会打印并保留新的证据目录。
+
+```sh
+mkdir -p ~/helmcraft-acceptance
+node scripts/personal-acceptance/run.mjs --config ~/agent-worker/worker.yaml --workspace project --output ~/helmcraft-acceptance
+node scripts/personal-acceptance/run.mjs --config ~/agent-worker/worker.yaml --workspace project --output ~/helmcraft-acceptance --reject-push
+```
+
+第一条验收命令执行 Git 历史读取和 Markdown 清单两个顺序任务。第二条命令让新建的 bare 远端拒绝推送，用于核对本地提交、未移动的远端 SHA 和未完成报告。
+
 ## 常用命令
 
 | 命令 | 用途 |

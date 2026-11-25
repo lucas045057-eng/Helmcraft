@@ -30,6 +30,11 @@ it('packages the full proposed change and refuses a drifted read-only reply whil
     for(const expected of ['-old line','+new line','TASKS.md','core passed','Emit a count.']) expect(review.prompt).toContain(expected)
     const reply=JSON.stringify({decision:'PASS',findings:[]})
     expect(review.finish(reply)).toMatchObject({tree:inspectChanges(root).tree,taskId:'task',runId:'run',ordinal:1})
+    const fenced = ['```json', reply, '```'].join('\n')
+    expect(review.finish(fenced)).toEqual(review.finish(reply))
+    for (const ambiguous of ['preface\n' + fenced, fenced + '\nmore', fenced + '\n' + fenced, fenced.replace('PASS', 'MAYBE')]) {
+      expect(() => review.finish(ambiguous)).toThrow()
+    }
     expect(readFileSync(join(root,'.git/index'))).toEqual(index)
     writeFileSync(join(root,'late.txt'),'late')
     expect(()=>review.finish(reply)).toThrow(/changed/)
