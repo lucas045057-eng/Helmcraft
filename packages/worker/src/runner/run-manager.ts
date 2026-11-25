@@ -22,6 +22,7 @@ import { assertBinding, personalBinding } from '../personal/preflight.js'
 import { checkPersonalRole, personalInvocation } from '../personal/roles.js'
 import { PersonalResult } from '../personal/result.js'
 import { preparePlan } from '../personal/plan.js'
+import { planBaseline, requiredCommands } from '../personal/execution.js'
 import { type AdapterRegistry } from '../adapters/registry.js'
 import { RunOutbox } from '../tunnel/outbox.js'
 import { trackProcessTree } from './kill-tree.js'
@@ -109,6 +110,7 @@ export class RunManager {
     return plan.activate()
   }
   private recordAcceptance(command: RunDispatch, workspaceRoot: string) {
+    if (command.personal?.projectId) this.journal.projectOccupation.claim(workspaceRoot, command.personal.projectId)
     this.journal.accepted({ runId: command.runId, taskId: command.taskId, workspaceId: command.workspaceId, workspaceRoot })
   }
   // An in-process reservation claims the slot synchronously. Its launch owns all I/O.
@@ -144,6 +146,8 @@ export class RunManager {
       if (!personal) return
       try {
         checkPersonalRole(personal.role, command)
+        if (personal.execution && (!personal.projectId || personal.role !== 'main' || personal.planSources ||
+          !command.harness?.verify || !this.config.harness.enabled)) throw new Error('Invalid item execution')
         if (personal.planSources && (personal.role !== 'main' || command.harness)) throw new Error('Invalid plan dispatch')
         if (profile.effectiveProfile !== command.profile || (personal.role !== 'main' && command.harness) ||
           command.harness?.verify?.autoFixMaxRetries) throw new Error('Invalid role profile')
@@ -151,10 +155,13 @@ export class RunManager {
       } catch { throw new WorkerError('INVALID', 'Personal role or repository binding rejected') }
     }
     checkBinding()
-    if (profile.effectiveProfile !== 'readonly') this.checkWriter(workspace.id, workspace.path)
+    if (profile.effectiveProfile !== 'readonly') {
+      this.checkWriter(workspace.id, workspace.path)
+      if (!this.journal.projectOccupation.permits(workspace.path, personal?.projectId)) throw new WorkerError('WORKSPACE_BUSY', 'PROJECT_OCCUPIED')
+    }
     const other = [...this.active.values()].filter(run => run.command.workspaceId === workspace.id ||
       (profile.effectiveProfile !== 'readonly' &&
-        withinWorkspace(run.workspacePath, workspace.path) && withinWorkspace(workspace.path, run.workspacePath)))
+        (withinWorkspace(run.workspacePath, workspace.path) || withinWorkspace(workspace.path, run.workspacePath))))
     if (profile.effectiveProfile === 'readonly'
       ? other.filter(run => run.profile.effectiveProfile === 'readonly').length >= workspace.maxConcurrent
       : other.some(run => run.profile.effectiveProfile !== 'readonly')) throw new WorkerError('WORKSPACE_BUSY')
@@ -219,6 +226,18 @@ export class RunManager {
     const session = run.harness
     const workspace = run.command.workspaceId
     const localHarness = this.config.workspaces.find(ws => ws.id === workspace)!.harness
+    const execution = run.command.personal?.execution
+    let verificationConfig = localHarness.verify
+    if (execution) {
+      try {
+        planBaseline(root, execution, true)
+        verificationConfig = { ...verificationConfig, commands: requiredCommands(execution, verificationConfig.commands) }
+      } catch {
+        this.finish(run, { kind: 'finished', status: 'failed', errorCode: 'ADAPTER_ERROR', exitCode: null, signal: null,
+          durationMs: Math.floor(this.clock.monotonic() - run.started), summary: 'PROJECT_BASELINE_OR_REQUIRED_CHECK_CHANGED' })
+        return
+      }
+    }
     let plan: ReturnType<typeof preparePlan> | undefined
     if (run.command.personal?.planSources) {
       try {
@@ -251,7 +270,7 @@ export class RunManager {
           session.manifest = await scanManifest(root, localHarness.manifest, session.sensitive)
           if (stopped()) return
         }
-        if (session.applied.verify) session.verifyCommandIds = localHarness.verify.commands.map(c => c.id)
+        if (session.applied.verify) session.verifyCommandIds = verificationConfig.commands.map(c => c.id)
         const agents = session.pre?.agentsMd ?? await readAgentsMd(root)
         if (stopped()) return
         const prompt = composeRun(run.command, session, root, cwd, agents, this.clock.now())
@@ -370,6 +389,7 @@ export class RunManager {
         const post = event.board
         this.outbox.push(id, event)
         if (requested && aggregate.status === 'succeeded') {
+          if (execution) { checkBinding(); planBaseline(root, execution, false) }
           if (!session.applied.verify) verification = { status: 'skipped', reason: session.applied.downgrades.some(d => d.reason === 'CONFIG_EXPOSED') ? 'CONFIG_EXPOSED' : 'NO_COMMANDS', attempts, failed: [] }
           else if (!event.changes || event.changes.truncated) verification = { status: 'unverified', reason: 'MANIFEST_INCOMPLETE', attempts, failed: [] }
           else if (event.tamper) verification = { status: 'skipped', reason: 'TAMPER_RISK', attempts, failed: [] }
@@ -385,13 +405,14 @@ export class RunManager {
               emit: ev => this.outbox.push(id, ev), log: (stream, text) => {
                 append(text + '\n')
                 this.outbox.push(id, { kind: 'log', stream, ...boundLogLine({ text }, logLimit) })
-              } }, localHarness.verify, attempts)
+              } }, verificationConfig, attempts)
             if (!cleanupUnconfirmed) {
               confirmCleanup()
               verificationHeld = false
             }
             try { local?.flush() } catch { this.warn('Local verification log flush failed') }
             verification = summary
+            if (execution) { checkBinding(); planBaseline(root, execution, false) }
             const facts = !verificationHeld && nextRepair(summary, results, event.changes, round, session.applied.autoFixMaxRetries, deadline - this.clock.monotonic(), run.command.timeoutMs)
             if (facts && !interrupted()) {
               const resume = probe.adapter?.features.resume && aggregate.cliSessionId && !aggregate.cliSessionId.startsWith('-') ? aggregate.cliSessionId : undefined
@@ -462,6 +483,9 @@ export class RunManager {
       if (verified !== cwd) throw new Error('Working directory changed before spawn')
       checkBinding()
       if (run.profile.effectiveProfile !== 'readonly') this.checkWriter(run.command.workspaceId, root)
+      if (run.profile.effectiveProfile !== 'readonly' && !this.journal.projectOccupation.permits(root, run.command.personal?.projectId)) {
+        throw new WorkerError('WORKSPACE_BUSY', 'PROJECT_OCCUPIED')
+      }
       if (invocation.tempFiles?.length) {
         tempDir = createRunTempDir(this.tempRoot)
         writeRunTempFiles(tempDir, invocation, env)

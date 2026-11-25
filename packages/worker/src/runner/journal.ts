@@ -6,6 +6,7 @@ import { aggregateRound } from '../harness/autofix.js'
 import { trackProcessTree } from './kill-tree.js'
 import { processStartTime } from './process-identity.js'
 import { VerificationHolds } from './verification-holds.js'
+import { ProjectOccupation } from '../personal/occupation.js'
 
 type Finished = Extract<RunEvent, { kind: 'finished' }>
 interface CliExited { round: number; verifyRequested: boolean; verifyAttempts: number; outcome: Omit<Finished, 'seq' | 'ts' | 'verification'> }
@@ -20,9 +21,11 @@ type RecordEntry =
 export class Journal {
   private readonly records = new Map<string, Entry>()
   readonly verificationHolds: VerificationHolds
+  readonly projectOccupation: ProjectOccupation
   constructor(private readonly path: string, private readonly clock: Clock) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.verificationHolds = new VerificationHolds(path + '.verification.json')
+    this.projectOccupation = new ProjectOccupation(path + '.project.json')
     if (!existsSync(path)) return
     for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
       if (!line.trim()) continue

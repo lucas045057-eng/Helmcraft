@@ -8,6 +8,7 @@ export function purgeLogSlice(db: Repos, now: number, days: { succeeded: number;
   const row = db.prepare(`SELECT r.id FROM task_runs r JOIN tasks t ON t.id = r.task_id
     WHERE r.logs_purged_at IS NULL AND r.status IN ${terminalRuns} AND r.finished_at < ?
       AND NOT EXISTS (SELECT 1 FROM personal_projects p WHERE p.plan_task_id=t.id AND p.phase NOT IN ('done','stopped'))
+      AND NOT EXISTS (SELECT 1 FROM personal_steps s JOIN personal_projects p ON p.id=s.project_id WHERE s.task_id=t.id AND p.phase NOT IN ('done','stopped'))
       AND r.finished_at < CASE WHEN t.status='succeeded' THEN ? ELSE ? END
     ORDER BY r.finished_at LIMIT 1`).get(now - Math.min(days.succeeded, days.other) * dayMs,
     now - days.succeeded * dayMs, now - days.other * dayMs) as { id: string } | undefined
@@ -23,6 +24,7 @@ export function purgeLogSlice(db: Repos, now: number, days: { succeeded: number;
 function purgeTask(db: Repos, cutoff: number, limit: number) {
   const task = db.prepare(`SELECT t.id FROM tasks t WHERE t.finished_at < ? AND t.status IN ${terminalTasks}
     AND NOT EXISTS (SELECT 1 FROM personal_projects p WHERE p.plan_task_id=t.id AND p.phase NOT IN ('done','stopped'))
+    AND NOT EXISTS (SELECT 1 FROM personal_steps s JOIN personal_projects p ON p.id=s.project_id WHERE s.task_id=t.id AND p.phase NOT IN ('done','stopped'))
     AND NOT EXISTS (SELECT 1 FROM task_runs r WHERE r.task_id=t.id AND
       (r.logs_purged_at IS NULL OR r.finished_at IS NULL OR r.finished_at >= ? OR r.status NOT IN ${terminalRuns}))
     AND NOT EXISTS (SELECT 1 FROM input_requests i WHERE i.task_id=t.id AND i.created_at >= ?)

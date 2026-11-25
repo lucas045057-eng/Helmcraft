@@ -27,6 +27,7 @@ import type { HarnessRecord } from './harness.js'
 import { acceptRun, autoAccept, observeAcceptance, pointerView, rollbackWriteRegistration } from './pointers.js'
 import { handoffSource, preview } from './handoff.js'
 import { existingPlan, findPlanningTask, recordPlanningTask, recordPlanResult } from './personal-plan.js'
+import { beginImplementation, blockProject, executionStep, finishImplementation, managedTask, occupied, projectExecution } from './personal-execution.js'
 
 type Effect = TaskEffect | { type: 'pointer.changed'; workerId: string; workspaceId: string } | { type: 'harness.updated' } | { type: 'verification.outcome'; status: 'passed' | 'failed' | 'unverified' | 'skipped' }
 export interface OrchestratorConfig {
@@ -142,6 +143,10 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     const now = this.now()
     const effects: Effect[] = []
     const response = this.ctx.store.tx(db => {
+      if (parent && managedTask(db, parent.id)) throw new HubError('INVALID_TRANSITION', 409, { reason: 'WORKFLOW_MANAGED' })
+      if (!opts.personalPlan && !opts.implementProject && data.profile !== 'readonly' && occupied(db, data.workspaceId, data.requiredWorkerId)) {
+        throw new HubError('INVALID_TRANSITION', 409, { reason: 'PROJECT_OCCUPIED' })
+      }
       if (opts.personalPlan) {
         if (actor.type !== 'owner') throw new HubError('FORBIDDEN', 403)
         const existing = existingPlan(db, opts.personalPlan)
@@ -190,14 +195,18 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         adapter: data.adapter ?? null, adapterPrefsJson: data.adapterPrefs ?? null, workspaceId: data.workspaceId,
         subdir: data.subdir ?? null, model: data.model ?? null, requiredWorkerId: data.requiredWorkerId ?? null,
         preferredWorkerId: data.preferredWorkerId ?? null, resumeSessionId: previousRun?.cliSessionId ?? null,
-        timeoutMs: data.timeoutMs ?? this.config.tasks.defaultTimeoutMs, maxAttempts: opts.personalPlan ? 1 : next.maxAttempts,
+        timeoutMs: data.timeoutMs ?? this.config.tasks.defaultTimeoutMs, maxAttempts: opts.personalPlan || opts.implementProject ? 1 : next.maxAttempts,
         policyDecisionJson: policy, errorCode: next.errorCode ?? null, priority: data.priority,
         approvalDeadlineAt: next.status === 'awaiting_approval' ? now + (policy.approvalTimeoutMs ?? this.config.tasks.approvalTimeoutMs) : null,
         queuedAt: next.status === 'queued' ? now : null, finishedAt: next.status === 'rejected' ? now : null, createdAt: now, updatedAt: now,
       })
       if (opts.personalPlan) {
         recordPlanningTask(db, opts.personalPlan, id, now)
-        if (next.status === 'rejected') db.prepare("UPDATE personal_projects SET phase='blocked',reason='POLICY_REJECTED' WHERE plan_task_id=?").run(id)
+        if (next.status === 'rejected') blockProject(db, opts.personalPlan.projectId, 'POLICY_REJECTED', now)
+      }
+      if (opts.implementProject) {
+        beginImplementation(db, opts.implementProject, id, now)
+        if (next.status === 'rejected') blockProject(db, opts.implementProject, 'POLICY_REJECTED', now)
       }
       this.audit(db, id, actor, 'task.submit', null, next.status, { policy })
       if (handoff) this.audit(db, id, actor, 'task.handoff.created', null, next.status,
@@ -327,6 +336,12 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   }
   private apply(db: Repos, id: string, event: TaskEvent): Effect[] {
     const task = this.requireTask(id, db), now = this.now()
+    if (managedTask(db, id) && (event.type === 'RETRY' || event.type === 'INPUT_PROVIDE' || (event.type === 'APPROVE' && event.overrides))) {
+      throw new HubError('INVALID_TRANSITION', 409, { reason: 'WORKFLOW_MANAGED' })
+    }
+    if (event.type === 'RETRY' && task.profile !== 'readonly' && occupied(db, task.workspaceId, task.requiredWorkerId)) {
+      throw new HubError('INVALID_TRANSITION', 409, { reason: 'PROJECT_OCCUPIED' })
+    }
     if ('runId' in event && event.runId !== task.currentRunId) return [{ type: 'metric.stale_run_event', runId: event.runId }]
     const result = reduce(taskState(db, task), event, { now,
       ...(event.type === 'DISPATCH' && { newRunId: runId(now) }),
@@ -378,7 +393,11 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
             changes.model = task.harnessRequestJson?.requestedModel ??
               (write.adapter === source.adapter ? db.tasks.get(source.taskId)?.model ?? null : null)
           }
-          const harness = planHarness(db, task, { ...write, id: write.runId }, this.config.harness,
+          const step = executionStep(db, id)
+          if (step) db.prepare('UPDATE personal_steps SET run_id=? WHERE task_id=? AND run_id IS NULL').run(write.runId, id)
+          const planning = db.prepare("UPDATE personal_projects SET plan_run_id=? WHERE plan_task_id=? AND phase='planning'").run(write.runId, id).changes > 0
+          const harness: HarnessRecord | null = planning ? null : step ? { v: 1, directive: { v: 1, board: 'off', bootstrap: false,
+            inject: 'none', trust: 'owner', verify: { autoFixMaxRetries: 0 } } } : planHarness(db, task, { ...write, id: write.runId }, this.config.harness,
             this.ctx.workers.capabilities(write.workerId), now, () => this.audit(db, id, system, 'task.harness.facts_dropped', null, null, { runId: write.runId }))
           if (harness) this.harnessDispatches++
           db.insert(taskRuns).values({ id: write.runId, taskId: id, runSeq: write.runSeq, attempt: write.attempt,
@@ -428,9 +447,10 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       }
     }
     if (next.version !== task.version) {
-      if (['failed', 'timed_out', 'cancelled', 'rejected'].includes(next.status)) {
-        db.prepare("UPDATE personal_projects SET phase='blocked',reason=?,updated_at=? WHERE plan_task_id=? AND phase='planning'")
-          .run(next.errorCode ?? next.status, now, id)
+      if (['RUN_REFUSED','DISPATCH_LOST','RUN_LOST','INPUT_REQUEST','CANCEL'].includes(event.type) ||
+          ['failed','timed_out','cancelled','rejected'].includes(next.status)) {
+        const project = executionStep(db, id)?.project_id ?? findPlanningTask(db, id)?.id
+        if (project) blockProject(db, project, next.errorCode ?? event.type, now)
       }
       if (!db.tasks.casUpdate(id, task.version, changes)) {
         throw new HubError('VERSION_CONFLICT', 409, { current: this.view(this.requireTask(id), event.actor) })
@@ -494,10 +514,13 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     const source = this.checkHandoffBinding(task, run.workspaceId, run.workerId)
     const harness = run.harnessJson ? toWireDirective(run.harnessJson as HarnessRecord) : undefined
     const plan = findPlanningTask(this.db, task.id)
+    const step = executionStep(this.db, task.id)
+    const item = step && projectExecution(this.db, step.project_id)
     const payload: RunDispatch = { taskId: task.id, taskNo: task.taskNo, runId: run.id, attempt: run.attempt,
       adapter: run.adapter as AdapterId, workspaceId: run.workspaceId, profile: task.profile, prompt: task.prompt,
       timeoutMs: task.timeoutMs, idleTimeoutMs: this.config.tasks.idleTimeoutMs, notAfter: run.notAfter,
-      ...(plan ? { personal: { role: 'main' as const, binding: JSON.parse(plan.binding_json), planSources: JSON.parse(plan.sources_json) } } : harness && { harness }),
+      ...(plan ? { personal: { role: 'main' as const, projectId: plan.id, binding: JSON.parse(plan.binding_json), planSources: JSON.parse(plan.sources_json) } } :
+        item ? { personal: { role: 'main' as const, projectId: item.project.id, binding: item.binding, execution: item.execution }, ...(harness && { harness }) } : harness && { harness }),
       origin: { source: task.source, actorType: task.requesterType },
       ...(task.subdir && { subdir: task.subdir }), ...(task.model && { model: task.model }),
       ...(task.resumeSessionId && (!source || source.adapter === run.adapter) && { resume: { cliSessionId: task.resumeSessionId } }),
@@ -585,6 +608,11 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       effects.push({ type: 'harness.updated' })
     } else if (event.kind === 'verify') {
       applyVerifyEvent(db, findRun(db, run.id)!, event)
+      const step = executionStep(db, task.id)
+      if (step && event.phase === 'started') {
+        const changed = db.prepare("UPDATE personal_projects SET phase='verifying',updated_at=? WHERE id=? AND phase='implementing' AND current_item=?").run(this.now(), step.project_id, step.item_id)
+        if (changed.changes) db.prepare("UPDATE personal_items SET status='verifying' WHERE project_id=? AND item_id=?").run(step.project_id, step.item_id)
+      }
       effects.push({ type: 'harness.updated' })
       if (!this.ctx.workers.capabilities(run.workerId).includes('verify.v1')) this.harnessUnnegotiatedEvents++
     } else if (event.kind === 'input_request') {
@@ -599,6 +627,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         ...((event.cliSessionId || event.verification?.autoFix?.attempts) && { cliSessionId: event.cliSessionId ?? null }) })
       const fresh = findRun(db, run.id)!
       const record = fresh.harnessJson as HarnessRecord | null
+      finishImplementation(db, fresh, event, this.now())
       const outcome = finishVerification(db, fresh, event.verification, event.errorCode === 'WORKER_RESTARTED' ? 'WORKER_RESTARTED' : 'INTERNAL')
       if (outcome) {
         effects.push({ type: 'verification.outcome', status: outcome.status })
@@ -654,6 +683,10 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   }
   private async recover() {
     const now = this.now()
+    this.ctx.store.tx(db => {
+      const active = db.prepare("SELECT id FROM personal_projects WHERE phase NOT IN ('done','stopped','blocked')").all() as { id: string }[]
+      for (const project of active) blockProject(db, project.id, 'HUB_RESTART_INSPECT', now)
+    })
     for (const worker of this.db.select().from(workers).all()) {
       if (worker.connection === 'offline' && this.activeRuns(worker.id).length) {
         this.onWorkerOffline(worker.id, Math.max(worker.disconnectedAt ?? 0, this.ctx.workers.startedAt), worker.status === 'revoked')
@@ -663,6 +696,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       this.taskTimers(task)
       const run = task.currentRunId && findRun(this.db, task.currentRunId)
       if (!run) continue
+      if (managedTask(this.db, task.id)) continue
       if (run.status === 'dispatching') {
         if (run.notAfter < now) await this.lost(run)
         else this.dispatch(task, run)
@@ -705,12 +739,26 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   }
   private async schedulePass() {
     if (this.paused) return
+    const ready = this.db.prepare("SELECT id FROM personal_projects WHERE phase='implementation_ready'").all() as { id: string }[]
+    for (const { id } of ready) {
+      const { binding, item, execution, timeout } = projectExecution(this.db, id)
+      if (timeout < 10000) { this.ctx.store.tx(db => blockProject(db, id, 'TIME_BUDGET', this.now())); continue }
+      const prompt = ['Implement only the following fixed task in the current repository. Read the cited requirements.',
+        'Keep the plan and requirement files unchanged. Leave Git commit and push to the delivery step.',
+        JSON.stringify(execution.item)].join('\n')
+      if (item.status === 'pending') await this.submit({ prompt, requiredWorkerId: binding.workerId, workspaceId: binding.workspaceId,
+        profile: 'edit', adapter: 'codex', model: 'gpt-6.2-astra', timeoutMs: timeout }, owner, { implementProject: id })
+    }
     const queue = this.db.tasks.listQueued(this.config.scheduler.scanLimit)
     for (const candidate of queue) {
       if (this.paused) break
       await this.mutex.runExclusive(candidate.id, () => {
         const task = this.requireTask(candidate.id)
         if (task.status !== 'queued' || this.paused) return
+        const project = findPlanningTask(this.db, task.id)
+        const step = executionStep(this.db, task.id)
+        if (project && project.phase !== 'planning' || step && projectExecution(this.db, step.project_id).project.phase !== 'implementing') return
+        if (!project && !step && task.profile !== 'readonly' && occupied(this.db, task.workspaceId, task.requiredWorkerId)) return
         const active = this.activeRuns()
         const now = this.now()
         const concurrent = task.requesterType === 'requester' && this.db.select({ count: sql<number>`count(*)` }).from(tasks)

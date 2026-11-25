@@ -18,3 +18,8 @@ export const PersonalPlanReceipt = PersonalPlan.extend({
   sourceDigest: digest, tasksDigest: digest, checksDigest: digest,
 })
 export type PersonalPlanReceipt = z.infer<typeof PersonalPlanReceipt>
+export const PersonalItemExecution = z.strictObject({
+  item: PersonalPlanItem, sources: PlanSources, first: z.boolean(), head: PersonalPlanReceipt.shape.head,
+  sourceDigest: digest, tasksDigest: digest, checksDigest: digest,
+})
+export type PersonalItemExecution = z.infer<typeof PersonalItemExecution>

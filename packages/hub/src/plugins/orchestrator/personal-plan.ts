@@ -30,7 +30,12 @@ export function recordPlanningTask(db: Repos, input: PersonalPlanRequest, taskId
 // Called inside the existing run-event ingest transaction after Run/Task correlation.
 export function recordPlanResult(db: Repos, taskId: string, runId: string, event: Extract<RunEvent, { kind: 'finished' }>, now: number) {
   const project = findPlanningTask(db, taskId)
-  if (!project || project.phase !== 'planning') return
+  if (!project) return
+  if (project.phase !== 'planning') {
+    db.prepare("UPDATE personal_projects SET plan_run_id=?,plan_finished=1,active_ms=active_ms+?,updated_at=? WHERE id=? AND phase='blocked' AND plan_finished=0")
+      .run(runId, Math.max(0, event.durationMs), now, project.id)
+    return
+  }
   let receipt: PersonalPlanReceipt | undefined
   if (event.status === 'succeeded' && event.exitCode === 0 && event.personalResultDigest === createHash('sha256').update(event.summary).digest('hex')) {
     try { receipt = PersonalPlanReceipt.parse(JSON.parse(event.summary)) } catch { /* Preserve invalid evidence as a blocked result. */ }
@@ -39,7 +44,7 @@ export function recordPlanResult(db: Repos, taskId: string, runId: string, event
     const insert = db.prepare('INSERT INTO personal_items(project_id,item_id,ordinal,definition_json) VALUES(?,?,?,?)')
     receipt.items.forEach((item, i) => insert.run(project.id, item.id, i, JSON.stringify(item)))
   }
-  db.prepare('UPDATE personal_projects SET phase=?,reason=?,plan_json=?,plan_run_id=?,active_ms=active_ms+?,updated_at=? WHERE id=?')
+  db.prepare('UPDATE personal_projects SET phase=?,reason=?,plan_json=?,plan_run_id=?,plan_finished=1,active_ms=active_ms+?,updated_at=? WHERE id=?')
     .run(receipt ? 'plan_ready' : 'blocked', receipt ? null : 'PLAN_UNCONFIRMED', receipt ? JSON.stringify(receipt) : null,
       runId, Math.max(0, event.durationMs), now, project.id)
 }
