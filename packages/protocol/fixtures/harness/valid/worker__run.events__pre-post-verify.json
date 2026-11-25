@@ -1,0 +1,183 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "run.events",
+  "ts": 1700000000000,
+  "payload": {
+    "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "taskId": "tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "events": [
+      {
+        "seq": 1,
+        "ts": 1700000000000,
+        "kind": "started",
+        "pid": 1234,
+        "adapter": "mock",
+        "effectiveProfile": "edit",
+        "clampedFrom": "full",
+        "commandSummary": "mock"
+      },
+      {
+        "seq": 2,
+        "ts": 2,
+        "kind": "harness",
+        "applied": {
+          "board": "write",
+          "trust": "owner",
+          "inject": "handoff",
+          "bootstrap": true,
+          "verify": false,
+          "autoFixMaxRetries": 0,
+          "downgrades": []
+        },
+        "prompt": {
+          "version": 1,
+          "mode": "handoff",
+          "bytes": 3,
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "sections": [
+            "preamble",
+            "facts",
+            "task"
+          ],
+          "boardFiles": []
+        },
+        "board": {
+          "dir": "absent",
+          "agentsMd": {
+            "status": "absent",
+            "bytes": 0
+          },
+          "capturedAt": 1,
+          "files": [
+            {
+              "file": "HANDOFF.md",
+              "status": "absent",
+              "bytes": 0,
+              "lines": 0,
+              "overBudget": false,
+              "schemaOk": false
+            },
+            {
+              "file": "PROJECT_STATE.md",
+              "status": "absent",
+              "bytes": 0,
+              "lines": 0,
+              "overBudget": false,
+              "schemaOk": false
+            },
+            {
+              "file": "DECISIONS.md",
+              "status": "absent",
+              "bytes": 0,
+              "lines": 0,
+              "overBudget": false,
+              "schemaOk": false
+            },
+            {
+              "file": "LESSONS.md",
+              "status": "absent",
+              "bytes": 0,
+              "lines": 0,
+              "overBudget": false,
+              "schemaOk": false
+            }
+          ]
+        }
+      },
+      {
+        "seq": 3,
+        "ts": 3,
+        "kind": "workspace",
+        "round": 0,
+        "board": {
+          "dir": "absent",
+          "agentsMd": {
+            "status": "absent",
+            "bytes": 0
+          },
+          "capturedAt": 1,
+          "files": [
+            {
+              "file": "HANDOFF.md",
+              "status": "absent",
+              "bytes": 0,
+              "lines": 0,
+              "overBudget": false,
+              "schemaOk": false
+            },
+            {
+              "file": "PROJECT_STATE.md",
+              "status": "absent",
+              "bytes": 0,
+              "lines": 0,
+              "overBudget": false,
+              "schemaOk": false
+            },
+            {
+              "file": "DECISIONS.md",
+              "status": "absent",
+              "bytes": 0,
+              "lines": 0,
+              "overBudget": false,
+              "schemaOk": false
+            },
+            {
+              "file": "LESSONS.md",
+              "status": "absent",
+              "bytes": 0,
+              "lines": 0,
+              "overBudget": false,
+              "schemaOk": false
+            }
+          ]
+        }
+      },
+      {
+        "seq": 4,
+        "ts": 4,
+        "kind": "verify",
+        "attempt": 1,
+        "phase": "started",
+        "commands": [
+          "test"
+        ]
+      },
+      {
+        "seq": 5,
+        "ts": 5,
+        "kind": "verify",
+        "attempt": 1,
+        "phase": "result",
+        "commands": [
+          "test"
+        ],
+        "results": [
+          {
+            "id": "test",
+            "status": "passed",
+            "exitCode": 0,
+            "signal": null,
+            "durationMs": 2
+          }
+        ],
+        "status": "passed"
+      },
+      {
+        "seq": 6,
+        "ts": 1700000000000,
+        "kind": "finished",
+        "status": "succeeded",
+        "exitCode": 0,
+        "signal": null,
+        "summary": "done",
+        "durationMs": 2,
+        "verification": {
+          "status": "passed",
+          "attempts": 1,
+          "failed": []
+        }
+      }
+    ]
+  }
+}

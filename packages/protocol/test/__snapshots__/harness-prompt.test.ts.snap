@@ -1,0 +1,3 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`pins the rendered prompt matrix to a golden digest 1`] = `"0ba4ca31f3c36207a9c9d4bf9aca880a0548943e5cd7211d1efe0d520060ba4c"`;

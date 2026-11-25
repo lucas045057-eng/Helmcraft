@@ -1,0 +1,35 @@
+# 在运行 Worker 的 Windows 用户账户下配置和注册。
+workerId: win-desktop # 必须与 enroll --id 相同
+hub:
+  url: wss://hub.example.com/ws/worker
+  identityPath: identity.key # 相对 worker.yaml 的 Ed25519 私钥路径
+maxConcurrency: 2
+shutdown: { drainTimeoutMs: 0 }
+tunnel:
+  runBufferBytes: 8388608 # 每个 Run 的断线缓冲上限
+  totalBufferBytes: 67108864
+  flushIntervalMs: 100
+localLogs:
+  # dir: 'D:\AgentLogs' # 默认在本用户的 Worker 状态目录
+  maxBytesPerRun: 104857600
+  retentionDays: 14
+security:
+  useJobObject: true # 由 Windows 管理任务子进程树
+  allowedEnvOverrideKeys: []
+workspaces:
+  - id: sandbox
+    label: 本地测试仓库
+    path: 'C:\AgentWork\sandbox' # 必须预先创建，可替换为专用 Git 仓库
+    allowedAdapters: [codex]
+    maxProfile: edit # 可改为 readonly
+    strictProfile: false
+    maxConcurrent: 2
+adapters:
+  codex:
+    enabled: true # 使用登录用户 PATH 上的 CLI，先完成该账户的 CLI 登录
+    stderrEncoding: utf8
+    # command: 'C:\Tools\codex.exe'
+  # 启用其他已安装并登录的 CLI 时，同时更新 allowedAdapters。
+  # claude-code: { enabled: true, command: claude }
+  # gemini: { enabled: true, command: gemini }
+  # opencode: { enabled: true, command: opencode }

@@ -1,0 +1,14 @@
+{
+  "t": "event",
+  "topic": "workers",
+  "type": "workspace.updated",
+  "eventSeq": 1,
+  "data": {
+    "workerId": "worker-1",
+    "workspaceId": "sandbox",
+    "attemptCounter": 1,
+    "lastAccepted": null,
+    "lastAttempt": null,
+    "updatedAt": 2
+  }
+}

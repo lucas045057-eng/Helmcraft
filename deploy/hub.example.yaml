@@ -1,0 +1,67 @@
+# 将 hub.example.com 同时替换为已指向 VPS 的域名（含 Caddyfile）。
+server:
+  host: 0.0.0.0
+  port: 8080
+  publicUrl: https://hub.example.com
+  trustProxy: [172.29.60.0/24] # 对应 Compose 专用网段
+  allowInsecureWorker: false
+  timezone: Asia/Shanghai # 每日报表和本地时间 04:00 维护
+  shutdownTimeoutMs: 15000
+storage:
+  path: /data/hub.sqlite # 本机文件系统，需支持 WAL
+  ingest: { batchMs: 50, batchRows: 500, maxQueueRows: 50000 }
+workers:
+  path: /ws/worker
+  heartbeatIntervalMs: 10000
+  heartbeatTimeoutMs: 30000
+  gracePeriodMs: 90000 # 断线恢复窗口
+  handshakeTimeoutMs: 5000
+  maxFrameBytes: 1048576
+  maxInFlightBytes: 4194304
+  ackIntervalMs: 200
+  cmdAckTimeoutMs: 10000
+  maxResends: 3
+  rateLimits: { upgradesPerMinute: 20, maxUnauthenticated: 64, framesPerSecond: 200, bytesPerSecond: 8388608 }
+  redactionPatterns: [] # 额外的日志脱敏表达式
+orchestrator:
+  scheduler:
+    tickMs: 2000
+    scanLimit: 200
+    defaultAdapterOrder: [claude-code, codex, gemini, opencode]
+    refuseBackoffMs: 60000
+    unschedulableWarnMs: 60000
+  tasks:
+    defaultTimeoutMs: 1800000
+    idleTimeoutMs: 600000
+    approvalTimeoutMs: 86400000
+    inputTimeoutMs: 3600000
+    cancelAckTimeoutMs: 30000
+    dispatchAckTimeoutMs: 10000
+    maxDispatchResends: 3
+    maxAttempts: 3
+    maxPromptChars: 32000
+  limits: { maxActivePerRequester: 2, requesterTasksPerHour: 20 }
+logs:
+  maxBytesPerRun: 20971520 # 20 MiB
+  retentionDays: { succeeded: 30, other: 90 }
+  maxDbBytes: 10737418240 # 10 GiB；80% 缩短保留期，95% 暂停新日志文本
+retention:
+  sliceIntervalMs: 10000 # 每片最多处理一个 Run 的日志
+  sliceRows: 5000
+  backupDir: /data/backup # 保留最近 7 个日期的 SQLite 快照
+dashboard:
+  allowedOrigins: [https://hub.example.com] # 浏览器 Origin，含协议，无尾部斜杠
+  sessionTtlMs: 43200000
+feishu:
+  enabled: true # 暂不接入飞书时改为 false
+  domain: feishu
+  ownerOpenIds: [] # 启动后私聊 /whoami，将本应用的 ou_... 加入
+  requesterPolicy: allowlist
+  requesterAllowlist: [] # 已授权请求人的 open_id
+  allowedChatIds: [] # 允许接单的群 chat_id
+  approvalTarget: owner_p2p
+  requesterReplyPolicy: auto # 改为 owner_review 可先审核结果
+  defaultWorkspaceId: sandbox
+  chatDefaults: {} # 示例 { oc_xxx: { workspaceId: sandbox, adapter: codex } }
+  staleMessageMs: 600000
+  card: { minPatchIntervalMs: 3000, minPatchIntervalHighMs: 1000, globalPatchQps: 5, cardMaxBytes: 28672, cardResultMaxChars: 2000 }

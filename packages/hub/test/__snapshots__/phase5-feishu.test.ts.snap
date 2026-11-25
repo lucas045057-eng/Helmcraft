@@ -1,0 +1,1201 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`snapshots progress states for owner 1`] = `
+[
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "behaviors": [
+            {
+              "type": "callback",
+              "value": {
+                "a": "cancel",
+                "t": "tsk_00000000000000000000000000",
+                "v": 1,
+                "ver": 3,
+              },
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "取消",
+            "tag": "plain_text",
+          },
+          "type": "danger",
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "grey",
+      "title": {
+        "content": "#1 · 等待负责人审批",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "behaviors": [
+            {
+              "type": "callback",
+              "value": {
+                "a": "cancel",
+                "t": "tsk_00000000000000000000000000",
+                "v": 1,
+                "ver": 3,
+              },
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "取消",
+            "tag": "plain_text",
+          },
+          "type": "danger",
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "blue",
+      "title": {
+        "content": "#1 · 排队中",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "blue",
+      "title": {
+        "content": "#1 · 分配中",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "第一步",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "执行 npm test",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "查看 C:\\internal\\job",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "behaviors": [
+            {
+              "default_url": "https://internal.test/tasks/1",
+              "type": "open_url",
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "打开面板",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "behaviors": [
+            {
+              "type": "callback",
+              "value": {
+                "a": "cancel",
+                "t": "tsk_00000000000000000000000000",
+                "v": 1,
+                "ver": 3,
+              },
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "中止",
+            "tag": "plain_text",
+          },
+          "type": "danger",
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "wathet",
+      "title": {
+        "content": "#1 · 执行中",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "请确认",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "behaviors": [
+            {
+              "type": "callback",
+              "value": {
+                "a": "input_option",
+                "opt": "继续",
+                "req": "q1",
+                "t": "tsk_00000000000000000000000000",
+                "v": 1,
+                "ver": 3,
+              },
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "继续",
+            "tag": "plain_text",
+          },
+          "type": "primary",
+        },
+        {
+          "behaviors": [
+            {
+              "type": "callback",
+              "value": {
+                "a": "input_option",
+                "opt": "停止",
+                "req": "q1",
+                "t": "tsk_00000000000000000000000000",
+                "v": 1,
+                "ver": 3,
+              },
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "停止",
+            "tag": "plain_text",
+          },
+          "type": "primary",
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "直接回复本卡片作答",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "orange",
+      "title": {
+        "content": "#1 · 等待补充信息",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "第一步",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "执行 npm test",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "查看 C:\\internal\\job",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "behaviors": [
+            {
+              "default_url": "https://internal.test/tasks/1",
+              "type": "open_url",
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "打开面板",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "wathet",
+      "title": {
+        "content": "#1 · 正在中止",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "完成检查",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "回复本卡片可继续对话",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "green",
+      "title": {
+        "content": "#1 · 已完成",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "已驳回",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "grey",
+      "title": {
+        "content": "#1 · 已驳回",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "执行失败",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "尝试次数 1",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "behaviors": [
+            {
+              "type": "callback",
+              "value": {
+                "a": "retry",
+                "t": "tsk_00000000000000000000000000",
+                "v": 1,
+                "ver": 3,
+              },
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "重试",
+            "tag": "plain_text",
+          },
+          "type": "primary",
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "red",
+      "title": {
+        "content": "#1 · 执行失败",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "执行超时",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "尝试次数 1",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "behaviors": [
+            {
+              "type": "callback",
+              "value": {
+                "a": "retry",
+                "t": "tsk_00000000000000000000000000",
+                "v": 1,
+                "ver": 3,
+              },
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "重试",
+            "tag": "plain_text",
+          },
+          "type": "primary",
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "red",
+      "title": {
+        "content": "#1 · 执行超时",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "已取消",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "grey",
+      "title": {
+        "content": "#1 · 已取消",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+]
+`;
+
+exports[`snapshots progress states for requester 1`] = `
+[
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "behaviors": [
+            {
+              "type": "callback",
+              "value": {
+                "a": "cancel",
+                "t": "tsk_00000000000000000000000000",
+                "v": 1,
+                "ver": 3,
+              },
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "取消",
+            "tag": "plain_text",
+          },
+          "type": "danger",
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "grey",
+      "title": {
+        "content": "#1 · 等待负责人审批",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "behaviors": [
+            {
+              "type": "callback",
+              "value": {
+                "a": "cancel",
+                "t": "tsk_00000000000000000000000000",
+                "v": 1,
+                "ver": 3,
+              },
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "取消",
+            "tag": "plain_text",
+          },
+          "type": "danger",
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "blue",
+      "title": {
+        "content": "#1 · 排队中",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "blue",
+      "title": {
+        "content": "#1 · 分配中",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "第一步",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "（内部信息已隐藏）",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "（内部信息已隐藏）",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "behaviors": [
+            {
+              "type": "callback",
+              "value": {
+                "a": "cancel",
+                "t": "tsk_00000000000000000000000000",
+                "v": 1,
+                "ver": 3,
+              },
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "中止",
+            "tag": "plain_text",
+          },
+          "type": "danger",
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "wathet",
+      "title": {
+        "content": "#1 · 执行中",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "请确认",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "behaviors": [
+            {
+              "type": "callback",
+              "value": {
+                "a": "input_option",
+                "opt": "继续",
+                "req": "q1",
+                "t": "tsk_00000000000000000000000000",
+                "v": 1,
+                "ver": 3,
+              },
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "继续",
+            "tag": "plain_text",
+          },
+          "type": "primary",
+        },
+        {
+          "behaviors": [
+            {
+              "type": "callback",
+              "value": {
+                "a": "input_option",
+                "opt": "停止",
+                "req": "q1",
+                "t": "tsk_00000000000000000000000000",
+                "v": 1,
+                "ver": 3,
+              },
+            },
+          ],
+          "tag": "button",
+          "text": {
+            "content": "停止",
+            "tag": "plain_text",
+          },
+          "type": "primary",
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "直接回复本卡片作答",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "orange",
+      "title": {
+        "content": "#1 · 等待补充信息",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "第一步",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "（内部信息已隐藏）",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "（内部信息已隐藏）",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "wathet",
+      "title": {
+        "content": "#1 · 正在中止",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "完成检查",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "回复本卡片可继续对话",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "green",
+      "title": {
+        "content": "#1 · 已完成",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "已驳回",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "grey",
+      "title": {
+        "content": "#1 · 已驳回",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "执行失败",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "尝试次数 1",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "red",
+      "title": {
+        "content": "#1 · 执行失败",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "执行超时",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "尝试次数 1",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "red",
+      "title": {
+        "content": "#1 · 执行超时",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+  {
+    "body": {
+      "elements": [
+        {
+          "tag": "div",
+          "text": {
+            "content": "检查任务",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "已取消",
+            "tag": "plain_text",
+          },
+        },
+        {
+          "tag": "div",
+          "text": {
+            "content": "耗时 4 秒",
+            "tag": "plain_text",
+          },
+        },
+      ],
+    },
+    "config": {
+      "update_multi": true,
+      "width_mode": "fill",
+    },
+    "header": {
+      "template": "grey",
+      "title": {
+        "content": "#1 · 已取消",
+        "tag": "plain_text",
+      },
+    },
+    "schema": "2.0",
+  },
+]
+`;

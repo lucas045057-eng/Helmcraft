@@ -1,0 +1,26 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "worker.heartbeat",
+  "ts": 1700000000000,
+  "payload": {
+    "activeRuns": [
+      {
+        "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "state": "running",
+        "lastSeq": 2,
+        "pid": 1234
+      }
+    ],
+    "slotsUsed": 1,
+    "load": {
+      "memFreeMb": 1024,
+      "memTotalMb": 2048
+    },
+    "adapters": {
+      "mock": "ready"
+    },
+    "bufferedBytes": 0,
+    "droppedLogBytesTotal": 0
+  }
+}

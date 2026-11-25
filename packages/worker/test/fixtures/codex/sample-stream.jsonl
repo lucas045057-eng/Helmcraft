@@ -1,0 +1,13 @@
+{"type":"thread.started","thread_id":"session-1"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"type":"reasoning","text":"Inspect the workspace"}}
+{"type":"item.completed","item":{"type":"command_execution","command":"git status","exit_code":0,"aggregated_output":"clean"}}
+{"type":"item.completed","item":{"type":"file_change","changes":[{"path":"src/a.ts","kind":"update"}]}}
+{"type":"item.started","item":{"type":"mcp_tool_call","id":"tool-1","server":"docs","tool":"search","arguments":{"q":"example"}}}
+{"type":"item.completed","item":{"type":"web_search","query":"example"}}
+{"type":"item.completed","item":{"type":"error","message":"Transient warning"}}
+{"type":"item.completed","item":{"type":"agent_message","text":"完成"}}
+{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":5,"cached_input_tokens":3}}
+{"type":"item.completed","item":{"type":"agent_message"}}
+{"type":"future.event"}
+{"type":

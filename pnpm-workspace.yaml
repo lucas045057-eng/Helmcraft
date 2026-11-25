@@ -1,0 +1,9 @@
+packages:
+  - packages/*
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true
+  koffi: true
+  protobufjs: false
+minimumReleaseAgeExclude:
+  - '@larksuiteoapi/node-sdk@1.77.0'

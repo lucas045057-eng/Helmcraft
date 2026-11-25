@@ -1,0 +1,5 @@
+{
+  "t": "resync",
+  "reason": "gap_too_large",
+  "unexpected": true
+}

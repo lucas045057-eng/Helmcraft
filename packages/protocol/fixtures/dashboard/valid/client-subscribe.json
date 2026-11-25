@@ -1,0 +1,9 @@
+{
+  "t": "subscribe",
+  "topics": [
+    "overview",
+    "workers",
+    "tasks",
+    "task:tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV"
+  ]
+}

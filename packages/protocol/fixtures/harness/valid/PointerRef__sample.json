@@ -1,0 +1,10 @@
+{
+  "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "taskId": "tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "taskNo": 1,
+  "adapter": "mock",
+  "seq": 1,
+  "runStatus": "succeeded",
+  "verification": null,
+  "finishedAt": 1
+}

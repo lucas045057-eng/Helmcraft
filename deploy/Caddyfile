@@ -1,0 +1,9 @@
+hub.example.com {
+	encode zstd gzip
+	reverse_proxy hub:8080 {
+		flush_interval -1
+		transport http {
+			read_timeout 0
+		}
+	}
+}

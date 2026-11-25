@@ -1,0 +1,78 @@
+{
+  "t": "event",
+  "eventSeq": 4,
+  "topic": "task:tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "task.detail",
+  "data": {
+    "id": "tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "taskNo": 1,
+    "version": 5,
+    "title": "Mock task",
+    "status": "succeeded",
+    "priority": 0,
+    "requester": {
+      "type": "owner",
+      "id": "owner",
+      "channel": "dashboard"
+    },
+    "origin": {
+      "source": "dashboard"
+    },
+    "adapter": "mock",
+    "workspaceId": "sandbox",
+    "profile": "readonly",
+    "workerId": "win-desktop",
+    "attempt": 1,
+    "maxAttempts": 3,
+    "parentTaskId": null,
+    "lastProgress": null,
+    "scheduleHint": null,
+    "workerConnection": "online",
+    "graceUntil": null,
+    "errorCode": null,
+    "resultDeliveryStatus": "pending_review",
+    "createdAt": 1700000000000,
+    "updatedAt": 1700000000000,
+    "startedAt": 1700000000000,
+    "finishedAt": 1700000000000,
+    "allowedActions": [
+      "followup",
+      "deliver_result"
+    ],
+    "prompt": "mock task",
+    "resultSummary": "done",
+    "runs": [
+      {
+        "id": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "taskId": "tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "attempt": 1,
+        "workerId": "win-desktop",
+        "adapter": "mock",
+        "workspaceId": "sandbox",
+        "profile": "readonly",
+        "status": "succeeded",
+        "pid": 1234,
+        "cliVersion": null,
+        "cliSessionId": "mock-session",
+        "exitCode": 0,
+        "errorCode": null,
+        "errorMessage": null,
+        "summary": "done",
+        "usage": null,
+        "lastSeq": 2,
+        "logBytes": 100,
+        "logDroppedBytes": 0,
+        "dispatchedAt": 1700000000000,
+        "startedAt": 1700000000000,
+        "finishedAt": 1700000000000
+      }
+    ],
+    "inputRequest": null,
+    "policyDecision": {
+      "ruleId": null,
+      "decision": "auto_approve"
+    },
+    "timeline": [],
+    "children": []
+  }
+}

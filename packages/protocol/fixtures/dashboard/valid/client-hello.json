@@ -1,0 +1,7 @@
+{
+  "t": "hello",
+  "resume": {
+    "bootId": "hub-boot",
+    "eventSeq": 1
+  }
+}

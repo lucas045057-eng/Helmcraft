@@ -1,0 +1,14 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "hub.challenge",
+  "ts": 1700000000000,
+  "payload": {
+    "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "hubBootId": "hub-boot",
+    "serverTime": 1700000000000,
+    "protocolVersions": [
+      1
+    ]
+  }
+}

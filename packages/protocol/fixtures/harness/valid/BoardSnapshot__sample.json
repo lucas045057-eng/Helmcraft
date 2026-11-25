@@ -1,0 +1,42 @@
+{
+  "dir": "absent",
+  "agentsMd": {
+    "status": "absent",
+    "bytes": 0
+  },
+  "capturedAt": 1,
+  "files": [
+    {
+      "file": "HANDOFF.md",
+      "status": "absent",
+      "bytes": 0,
+      "lines": 0,
+      "overBudget": false,
+      "schemaOk": false
+    },
+    {
+      "file": "PROJECT_STATE.md",
+      "status": "absent",
+      "bytes": 0,
+      "lines": 0,
+      "overBudget": false,
+      "schemaOk": false
+    },
+    {
+      "file": "DECISIONS.md",
+      "status": "absent",
+      "bytes": 0,
+      "lines": 0,
+      "overBudget": false,
+      "schemaOk": false
+    },
+    {
+      "file": "LESSONS.md",
+      "status": "absent",
+      "bytes": 0,
+      "lines": 0,
+      "overBudget": false,
+      "schemaOk": false
+    }
+  ]
+}

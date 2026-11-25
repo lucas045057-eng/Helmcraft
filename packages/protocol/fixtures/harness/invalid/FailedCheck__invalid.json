@@ -1,0 +1,7 @@
+{
+  "id": "test",
+  "status": "failed",
+  "exitCode": 1,
+  "tail": "error",
+  "unexpected": true
+}

@@ -1,0 +1,9 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "hub.heartbeat_ack",
+  "ts": 1700000000000,
+  "payload": {
+    "serverTime": 1700000000000
+  }
+}

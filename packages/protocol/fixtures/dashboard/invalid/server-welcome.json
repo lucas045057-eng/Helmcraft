@@ -1,0 +1,8 @@
+{
+  "t": "welcome",
+  "bootId": "hub-boot",
+  "eventSeq": 1,
+  "serverTime": 1700000000000,
+  "resumed": false,
+  "unexpected": true
+}

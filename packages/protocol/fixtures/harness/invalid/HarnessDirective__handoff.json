@@ -1,0 +1,7 @@
+{
+  "v": 1,
+  "board": "write",
+  "trust": "owner",
+  "inject": "handoff",
+  "bootstrap": true
+}

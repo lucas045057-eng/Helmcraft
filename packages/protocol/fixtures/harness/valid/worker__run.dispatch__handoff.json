@@ -1,0 +1,74 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "run.dispatch",
+  "ts": 1700000000000,
+  "payload": {
+    "taskId": "tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "taskNo": 1,
+    "attempt": 1,
+    "adapter": "mock",
+    "workspaceId": "sandbox",
+    "profile": "readonly",
+    "prompt": "mock task",
+    "timeoutMs": 60000,
+    "idleTimeoutMs": 10000,
+    "notAfter": 1700000010000,
+    "origin": {
+      "source": "dashboard",
+      "actorType": "owner"
+    },
+    "harness": {
+      "v": 1,
+      "board": "write",
+      "trust": "owner",
+      "inject": "handoff",
+      "bootstrap": true,
+      "facts": {
+        "v": 1,
+        "generatedAt": 2,
+        "currentRun": {
+          "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          "taskNo": 1,
+          "adapter": "mock",
+          "trust": "owner"
+        },
+        "workspace": {
+          "workspaceId": "sandbox",
+          "lastAttempt": {
+            "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "taskNo": 1,
+            "adapter": "mock",
+            "trust": "owner",
+            "profile": "edit",
+            "runStatus": "succeeded",
+            "finishedAt": 1
+          },
+          "lastAccepted": {
+            "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "taskNo": 1,
+            "adapter": "mock",
+            "trust": "owner",
+            "profile": "edit",
+            "runStatus": "succeeded",
+            "finishedAt": 1
+          }
+        },
+        "handoff": {
+          "intent": "relay",
+          "from": {
+            "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "taskNo": 1,
+            "adapter": "mock",
+            "trust": "owner",
+            "profile": "edit",
+            "runStatus": "succeeded",
+            "finishedAt": 1,
+            "title": "Previous task"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "status": "passed",
+  "attempts": 1,
+  "failed": [],
+  "passed": [
+    "test"
+  ],
+  "unexpected": true
+}

@@ -1,0 +1,29 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "hub.welcome",
+  "ts": 1700000000000,
+  "payload": {
+    "sessionId": "session",
+    "connectionEpoch": 1,
+    "serverTime": 1700000000000,
+    "heartbeatIntervalMs": 10000,
+    "heartbeatTimeoutMs": 30000,
+    "ackIntervalMs": 200,
+    "maxFrameBytes": 1048576,
+    "maxInFlightBytes": 4194304,
+    "maxLogEntryBytes": 16384,
+    "resume": [
+      {
+        "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "action": "resume",
+        "ackSeq": 0
+      }
+    ],
+    "drain": false,
+    "redactionPatterns": [],
+    "capabilities": [
+      "blackboard.v1"
+    ]
+  }
+}

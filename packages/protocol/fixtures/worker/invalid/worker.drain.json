@@ -1,0 +1,10 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "worker.drain",
+  "ts": 1700000000000,
+  "payload": {
+    "drain": true,
+    "unexpected": true
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "worker.hello",
+  "ts": 1700000000000,
+  "payload": {
+    "auth": {
+      "workerId": "win-desktop",
+      "keyFingerprint": "testkey",
+      "clientNonce": "BBBBBBBBBBBBBBBBBBBBBB",
+      "signature": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+    },
+    "agent": {
+      "version": "0.1.0",
+      "hostname": "desk",
+      "os": "win32",
+      "arch": "x64",
+      "nodeVersion": "24.14.1",
+      "pid": 1234
+    },
+    "maxConcurrency": 2,
+    "adapters": [
+      {
+        "id": "mock",
+        "status": "ready",
+        "features": {
+          "resume": true,
+          "liveInput": true,
+          "structuredOutput": true
+        }
+      }
+    ],
+    "workspaces": [
+      {
+        "id": "sandbox",
+        "label": "Sandbox",
+        "allowedAdapters": [
+          "mock"
+        ],
+        "maxProfile": "edit",
+        "maxConcurrent": 2,
+        "isGitRepo": false,
+        "path": "C:\\private"
+      }
+    ],
+    "runs": [
+      {
+        "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "taskId": "tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "state": "running",
+        "lastSeq": 2,
+        "oldestBufferedSeq": 1
+      }
+    ],
+    "drain": false
+  }
+}

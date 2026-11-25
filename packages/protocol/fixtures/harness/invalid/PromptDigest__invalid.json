@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "mode": "handoff",
+  "bytes": 3,
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "sections": [
+    "preamble",
+    "facts",
+    "task"
+  ],
+  "boardFiles": [],
+  "unexpected": true
+}

@@ -1,0 +1,18 @@
+{
+  "entries": [
+    {
+      "seq": 1,
+      "ts": 1700000000000,
+      "kind": "gap",
+      "stream": null,
+      "text": null,
+      "data": {
+        "toSeq": 2
+      }
+    }
+  ],
+  "lastSeq": 2,
+  "hasMore": false,
+  "runFinished": true,
+  "unexpected": true
+}

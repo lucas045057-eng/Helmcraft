@@ -1,0 +1,12 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "hub.reject",
+  "ts": 1700000000000,
+  "payload": {
+    "code": "RATE_LIMITED",
+    "message": "try again",
+    "retryAfterMs": 1000,
+    "unexpected": true
+  }
+}

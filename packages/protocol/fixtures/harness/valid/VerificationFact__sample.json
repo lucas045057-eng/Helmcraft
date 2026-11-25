@@ -1,0 +1,8 @@
+{
+  "status": "passed",
+  "attempts": 1,
+  "failed": [],
+  "passed": [
+    "test"
+  ]
+}

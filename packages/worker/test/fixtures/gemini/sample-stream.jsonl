@@ -1,0 +1,10 @@
+{"type":"init","session_id":"session-1","model":"example"}
+{"type":"message","role":"user","content":"Inspect the workspace"}
+{"type":"tool_use","tool_name":"read_file","tool_id":"tool-1","parameters":{"file_path":"src/a.ts"}}
+{"type":"tool_result","tool_id":"tool-1","status":"success","output":"contents"}
+{"type":"message","role":"assistant","content":"完","delta":true}
+{"type":"message","role":"assistant","content":"成","delta":true}
+{"type":"result","status":"success","stats":{"input_tokens":12,"output_tokens":5,"cached":3}}
+{"type":"message","role":"assistant","delta":true}
+{"type":"future.event"}
+{"type":

@@ -1,0 +1,96 @@
+{
+  "fromRunId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "workerId": "worker-1",
+  "workspaceId": "sandbox",
+  "adapter": null,
+  "resume": false,
+  "facts": {
+    "v": 1,
+    "generatedAt": 2,
+    "currentRun": {
+      "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "taskNo": 1,
+      "adapter": "mock",
+      "trust": "owner"
+    },
+    "workspace": {
+      "workspaceId": "sandbox",
+      "lastAttempt": {
+        "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "taskNo": 1,
+        "adapter": "mock",
+        "trust": "owner",
+        "profile": "edit",
+        "runStatus": "succeeded",
+        "finishedAt": 1
+      },
+      "lastAccepted": {
+        "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "taskNo": 1,
+        "adapter": "mock",
+        "trust": "owner",
+        "profile": "edit",
+        "runStatus": "succeeded",
+        "finishedAt": 1
+      }
+    },
+    "handoff": {
+      "intent": "relay",
+      "from": {
+        "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+        "taskNo": 1,
+        "adapter": "mock",
+        "trust": "owner",
+        "profile": "edit",
+        "runStatus": "succeeded",
+        "finishedAt": 1,
+        "title": "Previous task"
+      }
+    }
+  },
+  "board": {
+    "dir": "absent",
+    "agentsMd": {
+      "status": "absent",
+      "bytes": 0
+    },
+    "capturedAt": 1,
+    "files": [
+      {
+        "file": "HANDOFF.md",
+        "status": "absent",
+        "bytes": 0,
+        "lines": 0,
+        "overBudget": false,
+        "schemaOk": false
+      },
+      {
+        "file": "PROJECT_STATE.md",
+        "status": "absent",
+        "bytes": 0,
+        "lines": 0,
+        "overBudget": false,
+        "schemaOk": false
+      },
+      {
+        "file": "DECISIONS.md",
+        "status": "absent",
+        "bytes": 0,
+        "lines": 0,
+        "overBudget": false,
+        "schemaOk": false
+      },
+      {
+        "file": "LESSONS.md",
+        "status": "absent",
+        "bytes": 0,
+        "lines": 0,
+        "overBudget": false,
+        "schemaOk": false
+      }
+    ]
+  },
+  "promptPreview": "continue",
+  "warnings": [],
+  "unexpected": true
+}

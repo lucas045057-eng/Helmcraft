@@ -1,0 +1,18 @@
+{
+  "t": "event",
+  "eventSeq": 4,
+  "topic": "overview",
+  "type": "system.status",
+  "data": {
+    "bootId": "hub-boot",
+    "startedAt": 1700000000000,
+    "version": "0.1.0",
+    "draining": false,
+    "restartRequired": false,
+    "configError": null,
+    "feishu": {
+      "state": "disabled",
+      "since": 1700000000000
+    }
+  }
+}

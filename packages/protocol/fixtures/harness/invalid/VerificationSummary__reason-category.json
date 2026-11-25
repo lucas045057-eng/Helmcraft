@@ -1,0 +1,6 @@
+{
+  "status": "skipped",
+  "attempts": 1,
+  "failed": [],
+  "reason": "WORKER_RESTARTED"
+}

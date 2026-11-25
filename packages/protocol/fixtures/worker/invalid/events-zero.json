@@ -1,0 +1,22 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "run.events",
+  "ts": 1700000000000,
+  "payload": {
+    "taskId": "tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "events": [
+      {
+        "seq": 0,
+        "ts": 1700000000000,
+        "kind": "started",
+        "pid": 1234,
+        "adapter": "mock",
+        "effectiveProfile": "edit",
+        "clampedFrom": "full",
+        "commandSummary": "mock"
+      }
+    ]
+  }
+}

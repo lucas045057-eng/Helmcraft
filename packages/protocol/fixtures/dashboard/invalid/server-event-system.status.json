@@ -1,0 +1,7 @@
+{
+  "t": "event",
+  "eventSeq": 4,
+  "topic": "overview",
+  "type": "system.status",
+  "data": {}
+}

@@ -1,0 +1,6 @@
+{
+  "t": "error",
+  "code": "RATE_LIMITED",
+  "message": "try again",
+  "unexpected": true
+}

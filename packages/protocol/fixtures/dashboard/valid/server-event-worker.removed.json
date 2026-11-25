@@ -1,0 +1,9 @@
+{
+  "t": "event",
+  "eventSeq": 4,
+  "topic": "workers",
+  "type": "worker.removed",
+  "data": {
+    "id": "win-desktop"
+  }
+}

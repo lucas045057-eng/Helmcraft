@@ -1,0 +1,27 @@
+{
+  "name": "agent-hub",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "tsc -b && pnpm --filter @agent-hub/dashboard build",
+    "test": "vitest run",
+    "demo": "node scripts/local-demo.mjs",
+    "lint": "eslint .",
+    "depcheck": "depcruise --config .dependency-cruiser.cjs packages"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "dependency-cruiser": "^17.0.0",
+    "eslint": "^9.39.0",
+    "fast-check": "^4.0.0",
+    "playwright": "^1.65.1",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.50.0",
+    "vite": "^7.0.0",
+    "vitest": "^4.0.0"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "run.events",
+  "ts": 1700000000000,
+  "payload": {
+    "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "taskId": "tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "events": [
+      {
+        "seq": 1,
+        "ts": 1700000000000,
+        "kind": "started",
+        "pid": 1234,
+        "adapter": "mock",
+        "effectiveProfile": "edit",
+        "clampedFrom": "full",
+        "commandSummary": "mock"
+      },
+      {
+        "seq": 2,
+        "ts": 1700000000000,
+        "kind": "finished",
+        "status": "succeeded",
+        "exitCode": 0,
+        "signal": null,
+        "summary": "done",
+        "durationMs": 2
+      }
+    ]
+  }
+}

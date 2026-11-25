@@ -1,0 +1,7 @@
+{
+  "t": "event",
+  "eventSeq": 4,
+  "topic": "task:tsk_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "task.detail",
+  "data": {}
+}

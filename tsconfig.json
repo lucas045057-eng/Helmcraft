@@ -1,0 +1,23 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./packages/protocol"
+    },
+    {
+      "path": "./packages/common"
+    },
+    {
+      "path": "./packages/hub"
+    },
+    {
+      "path": "./packages/worker"
+    },
+    {
+      "path": "./packages/mock-cli"
+    },
+    {
+      "path": "./packages/dashboard"
+    }
+  ]
+}

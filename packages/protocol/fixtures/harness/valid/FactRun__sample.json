@@ -1,0 +1,10 @@
+{
+  "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "taskNo": 1,
+  "adapter": "mock",
+  "trust": "owner",
+  "profile": "edit",
+  "runStatus": "succeeded",
+  "finishedAt": 1,
+  "title": "Previous task"
+}

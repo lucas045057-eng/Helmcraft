@@ -1,0 +1,10 @@
+{
+  "board": "write",
+  "trust": "owner",
+  "inject": "handoff",
+  "bootstrap": true,
+  "verify": false,
+  "autoFixMaxRetries": 0,
+  "downgrades": [],
+  "unexpected": true
+}

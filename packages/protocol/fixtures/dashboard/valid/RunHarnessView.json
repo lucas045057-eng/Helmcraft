@@ -1,0 +1,19 @@
+{
+  "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "directive": null,
+  "facts": null,
+  "applied": null,
+  "prompt": null,
+  "board": {
+    "pre": null,
+    "post": null,
+    "postRound": null,
+    "diff": []
+  },
+  "changes": null,
+  "tamper": null,
+  "readonlyCheck": null,
+  "verification": null,
+  "pointer": null,
+  "canAccept": false
+}

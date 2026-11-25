@@ -1,0 +1,15 @@
+**
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig*.json
+!packages/*/package.json
+!packages/*/tsconfig.json
+!packages/*/src/**
+!packages/dashboard/index.html
+!packages/dashboard/vite.config.*
+!packages/hub/migrations/**
+!packages/hub/maintenance/**
+**/node_modules
+**/dist
+**/*.tsbuildinfo

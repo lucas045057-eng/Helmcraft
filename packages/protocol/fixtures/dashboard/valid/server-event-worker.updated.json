@@ -1,0 +1,54 @@
+{
+  "t": "event",
+  "eventSeq": 4,
+  "topic": "workers",
+  "type": "worker.updated",
+  "data": {
+    "id": "win-desktop",
+    "displayName": "Workstation",
+    "status": "active",
+    "connection": "online",
+    "drain": false,
+    "drainSource": null,
+    "hostname": "desk",
+    "os": "win32",
+    "arch": "x64",
+    "agentVersion": "0.1.0",
+    "maxConcurrency": 2,
+    "slotsUsed": 0,
+    "rttMs": 2,
+    "load": {
+      "memFreeMb": 1024,
+      "memTotalMb": 2048
+    },
+    "adapters": [
+      {
+        "id": "mock",
+        "status": "ready",
+        "features": {
+          "resume": true,
+          "liveInput": true,
+          "structuredOutput": true
+        }
+      }
+    ],
+    "workspaces": [
+      {
+        "id": "sandbox",
+        "label": "Sandbox",
+        "allowedAdapters": [
+          "mock"
+        ],
+        "maxProfile": "edit",
+        "maxConcurrent": 2,
+        "isGitRepo": false
+      }
+    ],
+    "activeRunIds": [],
+    "graceUntil": null,
+    "bufferedBytes": 0,
+    "droppedLogBytesTotal": 0,
+    "lastSeenAt": 1700000000000,
+    "connectedAt": 1700000000000
+  }
+}

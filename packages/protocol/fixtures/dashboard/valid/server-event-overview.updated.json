@@ -1,0 +1,45 @@
+{
+  "t": "event",
+  "eventSeq": 4,
+  "topic": "overview",
+  "type": "overview.updated",
+  "data": {
+    "workersOnline": 1,
+    "workersTotal": 1,
+    "slotsUsed": 0,
+    "slotsTotal": 2,
+    "counts": {
+      "awaiting_approval": 0,
+      "queued": 0,
+      "dispatching": 0,
+      "running": 0,
+      "awaiting_input": 0,
+      "cancelling": 0,
+      "succeeded": 1,
+      "rejected": 0,
+      "failed": 0,
+      "timed_out": 0,
+      "cancelled": 0
+    },
+    "today": {
+      "succeeded": 1,
+      "failed": 0,
+      "cancelled": 0,
+      "successRate": 1,
+      "p50DurationMs": 2,
+      "p90DurationMs": 2
+    },
+    "feishu": {
+      "state": "disabled",
+      "since": 1700000000000
+    },
+    "hub": {
+      "bootId": "hub-boot",
+      "startedAt": 1700000000000,
+      "version": "0.1.0",
+      "draining": false,
+      "restartRequired": false,
+      "configError": null
+    }
+  }
+}

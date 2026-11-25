@@ -1,0 +1,45 @@
+{
+  "v": 1,
+  "generatedAt": 2,
+  "currentRun": {
+    "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "taskNo": 1,
+    "adapter": "mock",
+    "trust": "owner"
+  },
+  "workspace": {
+    "workspaceId": "sandbox",
+    "lastAttempt": {
+      "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "taskNo": 1,
+      "adapter": "mock",
+      "trust": "owner",
+      "profile": "edit",
+      "runStatus": "succeeded",
+      "finishedAt": 1
+    },
+    "lastAccepted": {
+      "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "taskNo": 1,
+      "adapter": "mock",
+      "trust": "owner",
+      "profile": "edit",
+      "runStatus": "succeeded",
+      "finishedAt": 1
+    }
+  },
+  "handoff": {
+    "intent": "relay",
+    "from": {
+      "runId": "run_01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "taskNo": 1,
+      "adapter": "mock",
+      "trust": "owner",
+      "profile": "edit",
+      "runStatus": "succeeded",
+      "finishedAt": 1,
+      "title": "Previous task"
+    }
+  },
+  "unexpected": true
+}

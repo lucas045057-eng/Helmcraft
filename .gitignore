@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+deploy/.env
+deploy/hub.yaml
+deploy/data/
+*.core
+core
+gate-test.txt
