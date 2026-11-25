@@ -26,6 +26,7 @@ import { applyVerifyEvent, finishVerification, applyHarnessEvent, harnessView, p
 import type { HarnessRecord } from './harness.js'
 import { acceptRun, autoAccept, observeAcceptance, pointerView, rollbackWriteRegistration } from './pointers.js'
 import { handoffSource, preview } from './handoff.js'
+import { existingPlan, findPlanningTask, recordPlanningTask, recordPlanResult } from './personal-plan.js'
 
 type Effect = TaskEffect | { type: 'pointer.changed'; workerId: string; workspaceId: string } | { type: 'harness.updated' } | { type: 'verification.outcome'; status: 'passed' | 'failed' | 'unverified' | 'skipped' }
 export interface OrchestratorConfig {
@@ -141,6 +142,15 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     const now = this.now()
     const effects: Effect[] = []
     const response = this.ctx.store.tx(db => {
+      if (opts.personalPlan) {
+        if (actor.type !== 'owner') throw new HubError('FORBIDDEN', 403)
+        const existing = existingPlan(db, opts.personalPlan)
+        if (existing) {
+          const task = this.getTask(existing, actor)
+          if (!task) throw new HubError('INVALID_TRANSITION', 409, { reason: 'PLANNING_TASK_UNAVAILABLE' })
+          return task
+        }
+      }
       const scope = JSON.stringify([actor.type, actor.id, source, parent?.id ?? 'POST /tasks'])
       const key = opts.idempotencyKey
       const requestHash = stableHash({ data, origin, parent: parent?.id, ...(handoff && { handoff }), expectedParentVersion })
@@ -180,11 +190,15 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         adapter: data.adapter ?? null, adapterPrefsJson: data.adapterPrefs ?? null, workspaceId: data.workspaceId,
         subdir: data.subdir ?? null, model: data.model ?? null, requiredWorkerId: data.requiredWorkerId ?? null,
         preferredWorkerId: data.preferredWorkerId ?? null, resumeSessionId: previousRun?.cliSessionId ?? null,
-        timeoutMs: data.timeoutMs ?? this.config.tasks.defaultTimeoutMs, maxAttempts: next.maxAttempts,
+        timeoutMs: data.timeoutMs ?? this.config.tasks.defaultTimeoutMs, maxAttempts: opts.personalPlan ? 1 : next.maxAttempts,
         policyDecisionJson: policy, errorCode: next.errorCode ?? null, priority: data.priority,
         approvalDeadlineAt: next.status === 'awaiting_approval' ? now + (policy.approvalTimeoutMs ?? this.config.tasks.approvalTimeoutMs) : null,
         queuedAt: next.status === 'queued' ? now : null, finishedAt: next.status === 'rejected' ? now : null, createdAt: now, updatedAt: now,
       })
+      if (opts.personalPlan) {
+        recordPlanningTask(db, opts.personalPlan, id, now)
+        if (next.status === 'rejected') db.prepare("UPDATE personal_projects SET phase='blocked',reason='POLICY_REJECTED' WHERE plan_task_id=?").run(id)
+      }
       this.audit(db, id, actor, 'task.submit', null, next.status, { policy })
       if (handoff) this.audit(db, id, actor, 'task.handoff.created', null, next.status,
         { ...handoff, runId: handoff.fromRunId, fromTaskId: parent!.id, adapter: data.adapter ?? null })
@@ -414,6 +428,10 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       }
     }
     if (next.version !== task.version) {
+      if (['failed', 'timed_out', 'cancelled', 'rejected'].includes(next.status)) {
+        db.prepare("UPDATE personal_projects SET phase='blocked',reason=?,updated_at=? WHERE plan_task_id=? AND phase='planning'")
+          .run(next.errorCode ?? next.status, now, id)
+      }
       if (!db.tasks.casUpdate(id, task.version, changes)) {
         throw new HubError('VERSION_CONFLICT', 409, { current: this.view(this.requireTask(id), event.actor) })
       }
@@ -475,10 +493,11 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   private dispatch(task: TaskRow, run: RunRow) {
     const source = this.checkHandoffBinding(task, run.workspaceId, run.workerId)
     const harness = run.harnessJson ? toWireDirective(run.harnessJson as HarnessRecord) : undefined
+    const plan = findPlanningTask(this.db, task.id)
     const payload: RunDispatch = { taskId: task.id, taskNo: task.taskNo, runId: run.id, attempt: run.attempt,
       adapter: run.adapter as AdapterId, workspaceId: run.workspaceId, profile: task.profile, prompt: task.prompt,
       timeoutMs: task.timeoutMs, idleTimeoutMs: this.config.tasks.idleTimeoutMs, notAfter: run.notAfter,
-      ...(harness && { harness }),
+      ...(plan ? { personal: { role: 'main' as const, binding: JSON.parse(plan.binding_json), planSources: JSON.parse(plan.sources_json) } } : harness && { harness }),
       origin: { source: task.source, actorType: task.requesterType },
       ...(task.subdir && { subdir: task.subdir }), ...(task.model && { model: task.model }),
       ...(task.resumeSessionId && (!source || source.adapter === run.adapter) && { resume: { cliSessionId: task.resumeSessionId } }),
@@ -572,6 +591,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       effects.push(...this.apply(db, task.id, { type: 'INPUT_REQUEST', actor, runId: run.id, requestId: event.requestId,
         question: event.question, ...(event.options && { options: event.options }) }))
     } else if (event.kind === 'finished') {
+      recordPlanResult(db, task.id, run.id, event, this.now())
       effects.push(...this.apply(db, task.id, { type: finishedType[event.status], actor, runId: run.id,
         ...(event.errorCode && { errorCode: event.errorCode }) }))
       updateRun({ summary: event.summary, exitCode: event.exitCode, signal: event.signal, errorCode: event.errorCode ?? null,

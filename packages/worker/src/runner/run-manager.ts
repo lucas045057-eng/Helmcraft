@@ -21,6 +21,7 @@ import { filterExtraArgs } from '../security/args.js'
 import { assertBinding, personalBinding } from '../personal/preflight.js'
 import { checkPersonalRole, personalInvocation } from '../personal/roles.js'
 import { PersonalResult } from '../personal/result.js'
+import { preparePlan } from '../personal/plan.js'
 import { type AdapterRegistry } from '../adapters/registry.js'
 import { RunOutbox } from '../tunnel/outbox.js'
 import { trackProcessTree } from './kill-tree.js'
@@ -143,6 +144,7 @@ export class RunManager {
       if (!personal) return
       try {
         checkPersonalRole(personal.role, command)
+        if (personal.planSources && (personal.role !== 'main' || command.harness)) throw new Error('Invalid plan dispatch')
         if (profile.effectiveProfile !== command.profile || (personal.role !== 'main' && command.harness) ||
           command.harness?.verify?.autoFixMaxRetries) throw new Error('Invalid role profile')
         assertBinding(personal.binding, personalBinding(this.config, workspace.id, this.registry))
@@ -168,7 +170,7 @@ export class RunManager {
         delete input.resumeSessionId
         if (repair.resume) input.resumeSessionId = repair.resume
       }
-      return personal ? personalInvocation(personal.role, adapter, input) : adapter.buildInvocation(input)
+      return personal ? personalInvocation(personal.role, adapter, input, !!personal.planSources) : adapter.buildInvocation(input)
     }
     const invocation = build(command.prompt)
     const reservedEnv = new Set(Object.keys(invocation.env).map(key => key.toUpperCase()))
@@ -217,6 +219,20 @@ export class RunManager {
     const session = run.harness
     const workspace = run.command.workspaceId
     const localHarness = this.config.workspaces.find(ws => ws.id === workspace)!.harness
+    let plan: ReturnType<typeof preparePlan> | undefined
+    if (run.command.personal?.planSources) {
+      try {
+        checkBinding()
+        const checks = localHarness.verify.commands
+        plan = preparePlan(root, run.command.personal.planSources, checks.map(c => c.id),
+          createHash('sha256').update(JSON.stringify(checks)).digest('hex'))
+        invocation = build(plan.prompt)
+      } catch {
+        this.finish(run, { kind: 'finished', status: 'failed', errorCode: 'ADAPTER_ERROR', exitCode: null, signal: null,
+          durationMs: Math.floor(this.clock.monotonic() - run.started), summary: 'Planning requires tracked requirements, configured checks, a clean checkout and an unused TASKS.md' })
+        return
+      }
+    }
     const probe = this.registry.get(run.command.adapter)!
     if (session && !session.round) {
       try {
@@ -302,7 +318,16 @@ export class RunManager {
       const outcome = parser.finish({ code, signal, timedOut: stop === 'TIMEOUT' || stop === 'IDLE_TIMEOUT', cancelled: !!stop }, item)
       if (personalResult && outcome.status === 'succeeded') {
         const text = personalResult.finish()
-        if (text !== undefined && treeClosed) outcome.summary = text
+        if (text !== undefined && treeClosed && !run.stop) {
+          try {
+            if (plan) checkBinding()
+            outcome.summary = plan ? JSON.stringify(plan.install(freshScrub(text))) : text
+          } catch {
+            outcome.status = 'failed'
+            outcome.errorCode = 'ADAPTER_ERROR'
+            outcome.summary = 'Plan validation or baseline check failed; inspect the workspace'
+          }
+        }
         else {
           outcome.status = 'failed'
           outcome.errorCode = 'ADAPTER_ERROR'

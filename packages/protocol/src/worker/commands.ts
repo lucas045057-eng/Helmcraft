@@ -2,6 +2,7 @@ import { HarnessDirective } from './harness.js'
 import { z } from 'zod'
 import { AdapterId, FrameId, Profile, RunId, TaskId } from '../common.js'
 import { RunResumeState } from './handshake.js'
+import { PlanSources } from './personal-plan.js'
 export const PersonalBinding = z.strictObject({
   workerId: z.string().min(1), workspaceId: z.string().min(1),
   root: z.string().min(1), branch: z.string().min(1), remote: z.string().min(1), ref: z.string().startsWith('refs/heads/'),
@@ -9,8 +10,12 @@ export const PersonalBinding = z.strictObject({
   executables: z.strictObject({ main: z.string().min(1), reviewer: z.string().min(1), advisor: z.string().min(1) }),
 })
 export type PersonalBinding = z.infer<typeof PersonalBinding>
+export const PersonalPlanRequest = z.strictObject({
+  projectId: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/u), binding: PersonalBinding, sources: PlanSources,
+})
+export type PersonalPlanRequest = z.infer<typeof PersonalPlanRequest>
 export const RunDispatch = z.strictObject({
-  personal: z.strictObject({ role: z.enum(['main', 'reviewer', 'advisor']), binding: PersonalBinding }).optional(),
+  personal: z.strictObject({ role: z.enum(['main', 'reviewer', 'advisor']), binding: PersonalBinding, planSources: PlanSources.optional() }).optional(),
   harness: HarnessDirective.optional(),
   taskId: TaskId, runId: RunId, taskNo: z.number().int(), attempt: z.number().int().positive(),
   adapter: AdapterId,

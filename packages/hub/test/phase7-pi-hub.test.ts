@@ -385,7 +385,8 @@ it('BC-4 refuses to open a database created by a newer Hub', () => {
   try {
     const path = join(dir, 'hub.sqlite')
     const db = new Database(path)
-    db.pragma('user_version=5')
+    const latest = readdirSync(new URL('../migrations/', import.meta.url)).filter(f => /^\d+_.+\.sql$/u.test(f)).length
+    db.pragma('user_version=' + (latest + 1))
     db.close()
     expect(() => openStore({ path }, new FakeClock(1))).toThrow(/newer Hub/u)
   } finally {
@@ -407,7 +408,7 @@ it('BC-3 upgrades a Phase 6 file in place, keeps rows and leaves new columns NUL
     legacy.close()
     const store = openStore({ path }, new FakeClock(2))
     try {
-      expect(store.repos.pragma('user_version', { simple: true })).toBe(4)
+      expect(store.repos.pragma('user_version', { simple: true })).toBe(readdirSync(migrations).filter(f => /^\d+_.+\.sql$/u.test(f)).length)
       expect(store.repos.workers.get('v3')).toMatchObject({ id: 'v3', protocolCapsJson: null })
       expect(store.repos.prepare('SELECT count(*) AS n FROM workspace_pointers').get()).toEqual({ n: 0 })
       assertInvariants(store.repos)

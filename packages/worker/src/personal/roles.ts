@@ -57,9 +57,9 @@ export function readonlyAdvisor(root: string, command: string, args: string[]) {
     ...resolver, ...sharedState, '--chdir', '/tmp', '--', command, ...args] }
 }
 
-export function personalInvocation(role: PersonalRole, adapter: CliAdapter, input: InvocationInput) {
+export function personalInvocation(role: PersonalRole, adapter: CliAdapter, input: InvocationInput, planning = false) {
   const policy = personalProfiles[role]
-  const fixed = role === 'main' ? ['--sandbox', 'workspace-write', '-c', 'model_reasoning_effort="high"'] :
+  const fixed = role === 'main' ? ['--sandbox', planning ? 'read-only' : 'workspace-write', '-c', 'model_reasoning_effort="high"'] :
     role === 'reviewer' ? ['--permission-mode', 'dontAsk', '--effort', 'medium', '--safe-mode', '--strict-mcp-config',
       '--disable-slash-commands', '--no-session-persistence', '--tools', ''] : ['--sandbox', '--disable-slash-commands']
   const invocation = adapter.buildInvocation({ ...input, profile: policy.profile, model: policy.model,

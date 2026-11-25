@@ -92,6 +92,13 @@ export function apply(ctx: Context, config: DashboardConfig) {
   })
   route('GET', '/system/fibers', 'admin', () => describeFibers(ctx))
   route('GET', '/tasks', 'read', (req, _res, _params, actor) => api.TaskListResponse.parse(orchestrator.listTasks(parse(api.TaskListQuery, req.query), actor)))
+  route('POST', '/personal/plans', 'operate', async (req, res, _params, actor) => {
+    const plan = parse(api.PersonalPlanRequest, req.body)
+    const task = await orchestrator.createTask({ prompt: '生成项目任务计划 ' + plan.projectId, workspaceId: plan.binding.workspaceId,
+      requiredWorkerId: plan.binding.workerId, adapter: 'codex', profile: 'edit', model: 'gpt-6.2-astra', timeoutMs: 30 * 60_000 },
+    actor, { personalPlan: plan })
+    return res.code(201).send(api.TaskDetail.parse(task))
+  })
   route('POST', '/tasks', 'operate', async (req, res, _params, actor) => {
     const task = await orchestrator.createTask(parse(api.CreateTaskRequest, req.body), actor, idempotency(req))
     return res.code(201).send(api.TaskDetail.parse(task))

@@ -25,7 +25,7 @@ it('migrates an actual v3 file with an intact v3 backup and nullable new columns
     db.close()
     const migrated = openStore({ path }, new FakeClock(1234))
     try {
-      expect(migrated.repos.pragma('user_version', { simple: true })).toBe(4)
+      expect(migrated.repos.pragma('user_version', { simple: true })).toBe(readdirSync(migrations).filter(f => /^\d+_.+\.sql$/u.test(f)).length)
       expect(migrated.repos.workers.get('legacy')?.protocolCapsJson).toBeNull()
       const file = readdirSync(join(folder, 'backup')).find(f => f.startsWith('hub.sqlite.bak-3-'))!
       const backup = new Database(join(folder, 'backup', file), { readonly: true })
