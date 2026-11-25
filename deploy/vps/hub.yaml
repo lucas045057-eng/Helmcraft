@@ -1,0 +1,29 @@
+server:
+  host: 127.0.0.1
+  port: 18090
+  publicUrl: https://helm.sorengao.fun
+  trustProxy: [127.0.0.1]
+  allowInsecureWorker: false
+  timezone: Asia/Shanghai
+  shutdownTimeoutMs: 15000
+storage:
+  path: /var/lib/helmcraft/hub.sqlite
+retention:
+  backupDir: /var/lib/helmcraft/backup
+orchestrator:
+  scheduler:
+    defaultAdapterOrder: [claude-code, codex]
+dashboard:
+  allowedOrigins: [https://helm.sorengao.fun]
+  sessionTtlMs: 43200000
+feishu:
+  enabled: true
+  domain: feishu
+  ownerOpenIds: [] # 私聊机器人 /whoami 后填入 ou_...
+  requesterPolicy: allowlist
+  requesterAllowlist: []
+  allowedChatIds: []
+  approvalTarget: owner_p2p
+  requesterReplyPolicy: auto
+  defaultWorkspaceId: sandbox
+  chatDefaults: {}

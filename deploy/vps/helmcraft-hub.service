@@ -1,0 +1,25 @@
+[Unit]
+Description=Helmcraft Hub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=helmcraft
+Group=helmcraft
+WorkingDirectory=/opt/helmcraft
+Environment=NODE_ENV=production
+EnvironmentFile=/etc/helmcraft/hub.env
+ExecStart=/usr/bin/node packages/hub/dist/main.js /etc/helmcraft/hub.yaml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+MemoryMax=400M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/helmcraft
+
+[Install]
+WantedBy=multi-user.target
