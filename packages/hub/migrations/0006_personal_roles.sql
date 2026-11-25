@@ -1,0 +1,4 @@
+ALTER TABLE personal_items ADD COLUMN review_rounds INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE personal_items ADD COLUMN rejects INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE personal_items ADD COLUMN unknown_rounds INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE personal_items ADD COLUMN repair_debug_calls INTEGER NOT NULL DEFAULT 0;

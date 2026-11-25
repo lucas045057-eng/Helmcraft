@@ -23,6 +23,7 @@ import { checkPersonalRole, personalInvocation } from '../personal/roles.js'
 import { PersonalResult } from '../personal/result.js'
 import { preparePlan } from '../personal/plan.js'
 import { planBaseline, requiredCommands } from '../personal/execution.js'
+import { roleInput } from '../personal/review-input.js'
 import { type AdapterRegistry } from '../adapters/registry.js'
 import { RunOutbox } from '../tunnel/outbox.js'
 import { trackProcessTree } from './kill-tree.js'
@@ -146,6 +147,9 @@ export class RunManager {
       if (!personal) return
       try {
         checkPersonalRole(personal.role, command)
+        if (personal.gate && (!personal.projectId || personal.execution || personal.planSources || command.harness ||
+          personal.role !== (personal.gate.kind === 'review' ? 'reviewer' : personal.gate.kind === 'debug' ? 'main' : 'advisor'))) throw new Error('Invalid role gate')
+        if (personal.repair && !personal.execution) throw new Error('Missing repair baseline')
         if (personal.execution && (!personal.projectId || personal.role !== 'main' || personal.planSources ||
           !command.harness?.verify || !this.config.harness.enabled)) throw new Error('Invalid item execution')
         if (personal.planSources && (personal.role !== 'main' || command.harness)) throw new Error('Invalid plan dispatch')
@@ -177,7 +181,7 @@ export class RunManager {
         delete input.resumeSessionId
         if (repair.resume) input.resumeSessionId = repair.resume
       }
-      return personal ? personalInvocation(personal.role, adapter, input, !!personal.planSources) : adapter.buildInvocation(input)
+      return personal ? personalInvocation(personal.role, adapter, input, !!personal.planSources || personal.gate?.kind === 'debug') : adapter.buildInvocation(input)
     }
     const invocation = build(command.prompt)
     const reservedEnv = new Set(Object.keys(invocation.env).map(key => key.toUpperCase()))
@@ -230,7 +234,7 @@ export class RunManager {
     let verificationConfig = localHarness.verify
     if (execution) {
       try {
-        planBaseline(root, execution, true)
+        planBaseline(root, execution, !run.command.personal?.repair)
         verificationConfig = { ...verificationConfig, commands: requiredCommands(execution, verificationConfig.commands) }
       } catch {
         this.finish(run, { kind: 'finished', status: 'failed', errorCode: 'ADAPTER_ERROR', exitCode: null, signal: null,
@@ -239,6 +243,18 @@ export class RunManager {
       }
     }
     let plan: ReturnType<typeof preparePlan> | undefined
+    let gate: ReturnType<typeof roleInput> | undefined
+    if (run.command.personal?.gate) {
+      try {
+        checkBinding()
+        gate = roleInput(root,run.command)
+        invocation = build(gate.prompt)
+      } catch {
+        this.finish(run,{ kind:'finished',status:'failed',errorCode:'ADAPTER_ERROR',exitCode:null,signal:null,
+          durationMs:Math.floor(this.clock.monotonic()-run.started),summary:'Complete role input or repository binding unavailable' })
+        return
+      }
+    }
     if (run.command.personal?.planSources) {
       try {
         checkBinding()
@@ -339,12 +355,12 @@ export class RunManager {
         const text = personalResult.finish()
         if (text !== undefined && treeClosed && !run.stop) {
           try {
-            if (plan) checkBinding()
-            outcome.summary = plan ? JSON.stringify(plan.install(freshScrub(text))) : text
+            if (plan || gate) checkBinding()
+            outcome.summary = plan ? JSON.stringify(plan.install(freshScrub(text))) : gate ? JSON.stringify(gate.finish(freshScrub(text))) : text
           } catch {
             outcome.status = 'failed'
             outcome.errorCode = 'ADAPTER_ERROR'
-            outcome.summary = 'Plan validation or baseline check failed; inspect the workspace'
+            outcome.summary = 'Role output or repository baseline failed validation; inspect the workspace'
           }
         }
         else {

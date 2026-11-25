@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { AdapterId, FrameId, Profile, RunId, TaskId } from '../common.js'
 import { RunResumeState } from './handshake.js'
 import { PersonalItemExecution, PlanSources } from './personal-plan.js'
+import { PersonalGate } from './personal-gates.js'
 export const PersonalBinding = z.strictObject({
   workerId: z.string().min(1), workspaceId: z.string().min(1),
   root: z.string().min(1), branch: z.string().min(1), remote: z.string().min(1), ref: z.string().startsWith('refs/heads/'),
@@ -16,7 +17,8 @@ export const PersonalPlanRequest = z.strictObject({
 export type PersonalPlanRequest = z.infer<typeof PersonalPlanRequest>
 export const RunDispatch = z.strictObject({
   personal: z.strictObject({ role: z.enum(['main', 'reviewer', 'advisor']), binding: PersonalBinding,
-    projectId: PersonalPlanRequest.shape.projectId.optional(), planSources: PlanSources.optional(), execution: PersonalItemExecution.optional() }).optional(),
+    projectId: PersonalPlanRequest.shape.projectId.optional(), planSources: PlanSources.optional(), execution: PersonalItemExecution.optional(),
+    gate: PersonalGate.optional(), repair: z.literal(true).optional() }).optional(),
   harness: HarnessDirective.optional(),
   taskId: TaskId, runId: RunId, taskNo: z.number().int(), attempt: z.number().int().positive(),
   adapter: AdapterId,

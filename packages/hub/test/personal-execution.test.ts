@@ -30,6 +30,7 @@ it.each(['passed','missing','failed','quarantined','budget'])('runs only the fir
     const db = hub.ctx.store.repos
     worker = await FakeWorker.connect(hub, { workerId: binding.workerId, adapters: [{ ...defaultAdapters[0]!, id: 'codex' }] })
     const cmd = await worker.waitFor('run.dispatch', 8000)
+    hub.ctx.orchestrator.pauseScheduling() // Observe the execution boundary before a T14 role is queued.
     const d = RunDispatch.parse(cmd.payload)
     expect(d.personal?.execution?.item.id).toBe('ONE')
     expect(d.harness?.verify?.autoFixMaxRetries).toBe(0)
@@ -49,9 +50,9 @@ it.each(['passed','missing','failed','quarantined','budget'])('runs only the fir
       personalResultDigest:hash('ok'), verification:{ status: mode === 'quarantined' ? 'unverified' : mode === 'failed' ? 'failed' : 'passed',
         ...(mode === 'quarantined' && { reason:'INTERNAL' }), attempts:1, failed:mode === 'failed' ? ['core'] : [] } }
     worker.events(d.runId,d.taskId,[terminal])
-    await eventually(() => ['review_ready','blocked'].includes(phase()))
+    await eventually(() => ['review_ready','debug_ready','blocked'].includes(phase()))
     worker.events(d.runId,d.taskId,[terminal])
-    expect(phase()).toBe(mode === 'passed' ? 'review_ready' : 'blocked')
+    expect(phase()).toBe(mode === 'passed' ? 'review_ready' : mode === 'failed' ? 'debug_ready' : 'blocked')
     expect(db.prepare('SELECT item_id,run_id,active_ms FROM personal_steps').all()).toEqual([{ item_id:'ONE',run_id:d.runId,active_ms:duration }])
     expect(db.prepare('SELECT current_item,active_ms FROM personal_projects').get()).toEqual({current_item:'ONE',active_ms:duration+50})
     expect(db.prepare("SELECT status FROM personal_items WHERE item_id='TWO'").get()).toEqual({status:'pending'})

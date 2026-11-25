@@ -4,13 +4,14 @@ import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { RunDispatch } from '@agent-hub/protocol'
+import { personalRoleSettings } from '@agent-hub/protocol'
 import { withinWorkspace } from '../security/workspace.js'
 import type { CliAdapter, InvocationInput } from '../adapters/types.js'
 
 export const personalProfiles = {
-  main: { adapter: 'codex', profile: 'edit', model: 'gpt-6.2-astra', version: '0.166.0' },
-  reviewer: { adapter: 'claude-code', profile: 'readonly', model: 'claude-opus-5-5', version: '2.1.318' },
-  advisor: { adapter: 'antigravity', profile: 'readonly', model: 'gemini-4-carbon-high', version: '1.5.17' },
+  main: { ...personalRoleSettings.main, version: '0.166.0' },
+  reviewer: { ...personalRoleSettings.reviewer, version: '2.1.318' },
+  advisor: { ...personalRoleSettings.advisor, version: '1.5.17' },
 } as const
 export type PersonalRole = keyof typeof personalProfiles
 

@@ -2,7 +2,7 @@ import { Context, Service } from 'cordis'
 import { z } from 'zod'
 import { and, eq, gte, inArray, sql } from 'drizzle-orm'
 import { KeyedMutex, redact, runId, stableHash, taskId, ulid } from '@agent-hub/common'
-import { allowedActions, HANDOFF_DEFAULT_PROMPTS, stripBoardContent, CreateTaskRequest, Profile, reduce } from '@agent-hub/protocol'
+import { allowedActions, HANDOFF_DEFAULT_PROMPTS, stripBoardContent, CreateTaskRequest, personalRoleSettings, Profile, reduce } from '@agent-hub/protocol'
 import type { AcceptRunRequest, HandoffPreviewQuery, Actor, AdapterId, ApprovalOverrides, CmdAckPayload, DeliverResultRequest, HubCommand, LogsQuery,
   RunDispatch, RunEventsFrame, RunGapFrame, TaskEvent, TaskEffect, TaskListQuery, WorkerHello } from '@agent-hub/protocol'
 import type { HandoffInput, ApprovalOptions, CreateOptions, CreateTaskInput, Orchestrator, ReasonOptions, ResultSender, VersionOptions } from '../../services/orchestrator.js'
@@ -28,6 +28,7 @@ import { acceptRun, autoAccept, observeAcceptance, pointerView, rollbackWriteReg
 import { handoffSource, preview } from './handoff.js'
 import { existingPlan, findPlanningTask, recordPlanningTask, recordPlanResult } from './personal-plan.js'
 import { beginImplementation, blockProject, executionStep, finishImplementation, managedTask, occupied, projectExecution } from './personal-execution.js'
+import { beginGate, finishGate, gatePhases, personalDispatch, planAdvice, prepareGate, stepCanDispatch } from './personal-gates.js'
 
 type Effect = TaskEffect | { type: 'pointer.changed'; workerId: string; workspaceId: string } | { type: 'harness.updated' } | { type: 'verification.outcome'; status: 'passed' | 'failed' | 'unverified' | 'skipped' }
 export interface OrchestratorConfig {
@@ -144,7 +145,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     const effects: Effect[] = []
     const response = this.ctx.store.tx(db => {
       if (parent && managedTask(db, parent.id)) throw new HubError('INVALID_TRANSITION', 409, { reason: 'WORKFLOW_MANAGED' })
-      if (!opts.personalPlan && !opts.implementProject && data.profile !== 'readonly' && occupied(db, data.workspaceId, data.requiredWorkerId)) {
+      if (!opts.personalPlan && !opts.implementProject && !opts.gateProject && data.profile !== 'readonly' && occupied(db, data.workspaceId, data.requiredWorkerId)) {
         throw new HubError('INVALID_TRANSITION', 409, { reason: 'PROJECT_OCCUPIED' })
       }
       if (opts.personalPlan) {
@@ -155,6 +156,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
           if (!task) throw new HubError('INVALID_TRANSITION', 409, { reason: 'PLANNING_TASK_UNAVAILABLE' })
           return task
         }
+        if (occupied(db,data.workspaceId,data.requiredWorkerId)) throw new HubError('INVALID_TRANSITION',409,{reason:'PROJECT_OCCUPIED'})
       }
       const scope = JSON.stringify([actor.type, actor.id, source, parent?.id ?? 'POST /tasks'])
       const key = opts.idempotencyKey
@@ -195,7 +197,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         adapter: data.adapter ?? null, adapterPrefsJson: data.adapterPrefs ?? null, workspaceId: data.workspaceId,
         subdir: data.subdir ?? null, model: data.model ?? null, requiredWorkerId: data.requiredWorkerId ?? null,
         preferredWorkerId: data.preferredWorkerId ?? null, resumeSessionId: previousRun?.cliSessionId ?? null,
-        timeoutMs: data.timeoutMs ?? this.config.tasks.defaultTimeoutMs, maxAttempts: opts.personalPlan || opts.implementProject ? 1 : next.maxAttempts,
+        timeoutMs: data.timeoutMs ?? this.config.tasks.defaultTimeoutMs, maxAttempts: opts.personalPlan || opts.implementProject || opts.gateProject ? 1 : next.maxAttempts,
         policyDecisionJson: policy, errorCode: next.errorCode ?? null, priority: data.priority,
         approvalDeadlineAt: next.status === 'awaiting_approval' ? now + (policy.approvalTimeoutMs ?? this.config.tasks.approvalTimeoutMs) : null,
         queuedAt: next.status === 'queued' ? now : null, finishedAt: next.status === 'rejected' ? now : null, createdAt: now, updatedAt: now,
@@ -207,6 +209,10 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       if (opts.implementProject) {
         beginImplementation(db, opts.implementProject, id, now)
         if (next.status === 'rejected') blockProject(db, opts.implementProject, 'POLICY_REJECTED', now)
+      }
+      if (opts.gateProject) {
+        beginGate(db,opts.gateProject,id,now)
+        if (next.status === 'rejected') blockProject(db,opts.gateProject,'POLICY_REJECTED',now)
       }
       this.audit(db, id, actor, 'task.submit', null, next.status, { policy })
       if (handoff) this.audit(db, id, actor, 'task.handoff.created', null, next.status,
@@ -396,7 +402,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
           const step = executionStep(db, id)
           if (step) db.prepare('UPDATE personal_steps SET run_id=? WHERE task_id=? AND run_id IS NULL').run(write.runId, id)
           const planning = db.prepare("UPDATE personal_projects SET plan_run_id=? WHERE plan_task_id=? AND phase='planning'").run(write.runId, id).changes > 0
-          const harness: HarnessRecord | null = planning ? null : step ? { v: 1, directive: { v: 1, board: 'off', bootstrap: false,
+          const harness: HarnessRecord | null = planning || (step && !['implement','repair'].includes(step.kind)) ? null : step ? { v: 1, directive: { v: 1, board: 'off', bootstrap: false,
             inject: 'none', trust: 'owner', verify: { autoFixMaxRetries: 0 } } } : planHarness(db, task, { ...write, id: write.runId }, this.config.harness,
             this.ctx.workers.capabilities(write.workerId), now, () => this.audit(db, id, system, 'task.harness.facts_dropped', null, null, { runId: write.runId }))
           if (harness) this.harnessDispatches++
@@ -515,12 +521,11 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     const harness = run.harnessJson ? toWireDirective(run.harnessJson as HarnessRecord) : undefined
     const plan = findPlanningTask(this.db, task.id)
     const step = executionStep(this.db, task.id)
-    const item = step && projectExecution(this.db, step.project_id)
     const payload: RunDispatch = { taskId: task.id, taskNo: task.taskNo, runId: run.id, attempt: run.attempt,
       adapter: run.adapter as AdapterId, workspaceId: run.workspaceId, profile: task.profile, prompt: task.prompt,
       timeoutMs: task.timeoutMs, idleTimeoutMs: this.config.tasks.idleTimeoutMs, notAfter: run.notAfter,
       ...(plan ? { personal: { role: 'main' as const, projectId: plan.id, binding: JSON.parse(plan.binding_json), planSources: JSON.parse(plan.sources_json) } } :
-        item ? { personal: { role: 'main' as const, projectId: item.project.id, binding: item.binding, execution: item.execution }, ...(harness && { harness }) } : harness && { harness }),
+        step ? { personal: personalDispatch(this.db,step), ...(harness && { harness }) } : harness && { harness }),
       origin: { source: task.source, actorType: task.requesterType },
       ...(task.subdir && { subdir: task.subdir }), ...(task.model && { model: task.model }),
       ...(task.resumeSessionId && (!source || source.adapter === run.adapter) && { resume: { cliSessionId: task.resumeSessionId } }),
@@ -628,6 +633,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       const fresh = findRun(db, run.id)!
       const record = fresh.harnessJson as HarnessRecord | null
       finishImplementation(db, fresh, event, this.now())
+      finishGate(db,fresh,event,this.now())
       const outcome = finishVerification(db, fresh, event.verification, event.errorCode === 'WORKER_RESTARTED' ? 'WORKER_RESTARTED' : 'INTERNAL')
       if (outcome) {
         effects.push({ type: 'verification.outcome', status: outcome.status })
@@ -739,15 +745,27 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   }
   private async schedulePass() {
     if (this.paused) return
-    const ready = this.db.prepare("SELECT id FROM personal_projects WHERE phase='implementation_ready'").all() as { id: string }[]
-    for (const { id } of ready) {
-      const { binding, item, execution, timeout } = projectExecution(this.db, id)
-      if (timeout < 10000) { this.ctx.store.tx(db => blockProject(db, id, 'TIME_BUDGET', this.now())); continue }
-      const prompt = ['Implement only the following fixed task in the current repository. Read the cited requirements.',
-        'Keep the plan and requirement files unchanged. Leave Git commit and push to the delivery step.',
-        JSON.stringify(execution.item)].join('\n')
-      if (item.status === 'pending') await this.submit({ prompt, requiredWorkerId: binding.workerId, workspaceId: binding.workspaceId,
-        profile: 'edit', adapter: 'codex', model: 'gpt-6.2-astra', timeoutMs: timeout }, owner, { implementProject: id })
+    const phases = ['implementation_ready',...gatePhases]
+    const ready = this.db.prepare('SELECT id,phase FROM personal_projects WHERE phase IN ('+phases.map(()=>'?').join(',')+')').all(...phases) as { id: string; phase:string }[]
+    for (const { id,phase } of ready) {
+      try {
+        if (phase !== 'implementation_ready') {
+          const gate = prepareGate(this.db,id)
+          await this.submit(gate.input,owner,{gateProject:id})
+          continue
+        }
+        const { binding, item, execution, timeout } = projectExecution(this.db, id)
+        if (timeout < 10000) throw new Error('TIME_BUDGET')
+        if (item.status !== 'pending') throw new Error('FIXED_ITEM_UNAVAILABLE')
+        const prompt = ['Implement only the following fixed task in the current repository. Read the cited requirements.',
+          'Keep the plan and requirement files unchanged. Leave Git commit and push to the delivery step.',
+          JSON.stringify({item:execution.item,planAdvice:planAdvice(this.db,id)})].join('\n')
+        await this.submit({ prompt, requiredWorkerId: binding.workerId, workspaceId: binding.workspaceId,
+          ...personalRoleSettings.main, timeoutMs: timeout }, owner, { implementProject: id })
+      } catch (error) {
+        const reason = error instanceof HubError ? (error.details?.reason ?? error.code) : error instanceof Error ? error.message : ''
+        this.ctx.store.tx(db => blockProject(db,id,typeof reason === 'string' && /^[A-Z_]{1,80}$/u.test(reason) ? reason : 'PROJECT_SCHEDULING_UNCONFIRMED',this.now()))
+      }
     }
     const queue = this.db.tasks.listQueued(this.config.scheduler.scanLimit)
     for (const candidate of queue) {
@@ -757,7 +775,11 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         if (task.status !== 'queued' || this.paused) return
         const project = findPlanningTask(this.db, task.id)
         const step = executionStep(this.db, task.id)
-        if (project && project.phase !== 'planning' || step && projectExecution(this.db, step.project_id).project.phase !== 'implementing') return
+        if (project && project.phase !== 'planning') return
+        if (step) {
+          const phase = this.db.prepare('SELECT phase FROM personal_projects WHERE id=?').pluck().get(step.project_id)
+          if (typeof phase !== 'string' || !stepCanDispatch(step.kind,phase)) return
+        }
         if (!project && !step && task.profile !== 'readonly' && occupied(this.db, task.workspaceId, task.requiredWorkerId)) return
         const active = this.activeRuns()
         const now = this.now()

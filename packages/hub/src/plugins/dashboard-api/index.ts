@@ -95,7 +95,7 @@ export function apply(ctx: Context, config: DashboardConfig) {
   route('POST', '/personal/plans', 'operate', async (req, res, _params, actor) => {
     const plan = parse(api.PersonalPlanRequest, req.body)
     const task = await orchestrator.createTask({ prompt: '生成项目任务计划 ' + plan.projectId, workspaceId: plan.binding.workspaceId,
-      requiredWorkerId: plan.binding.workerId, adapter: 'codex', profile: 'edit', model: 'gpt-6.2-astra', timeoutMs: 30 * 60_000 },
+      requiredWorkerId: plan.binding.workerId, ...api.personalRoleSettings.main, timeoutMs: 30 * 60_000 },
     actor, { personalPlan: plan })
     return res.code(201).send(api.TaskDetail.parse(task))
   })
