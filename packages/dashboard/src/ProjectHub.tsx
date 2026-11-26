@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ProjectOverview, TaskDetail } from '@agent-hub/protocol'
+import { ProjectOverview } from '@agent-hub/protocol'
 import type { WorkerView } from '@agent-hub/protocol'
 import { errorText, request } from './api.js'
-import { HandoffModal } from './harness/HandoffModal.js'
 import { VerificationBadge } from './harness/VerificationPanel.js'
 import { ProjectBoard, projectHeadline } from './ProjectBoard.js'
-import { formatTime } from './format.js'
 import { useDashboard } from './store.js'
 
 const projectList = ProjectOverview.array()
@@ -22,17 +20,6 @@ function Adapters({ project }: { project: ProjectOverview }) {
   return <span className="cli-tags">{project.allowedAdapters.map(adapter => <code key={adapter}>{adapter}</code>)}</span>
 }
 
-function ProjectHandoff({ taskId, runId, worker, close, open }: {
-  taskId: string; runId: string; worker: WorkerView | undefined; close(): void; open(id: string): void
-}) {
-  const task = useQuery({ queryKey: ['project-handoff-task', taskId, runId], staleTime: 0,
-    queryFn: ({ signal }) => request('/tasks/' + taskId, TaskDetail, { signal }) })
-  const run = task.data?.runs.find(item => item.id === runId)
-  if (task.data && run) return <HandoffModal task={task.data} run={run} worker={worker} initialPrompt="" close={close} open={open} />
-  return <div role="status">{task.error ? errorText(task.error) : task.isPending ? '正在读取运行记录…' : '运行记录已不可用'}
-    <button onClick={close}>关闭</button></div>
-}
-
 interface Actions {
   workspaceId: string
   filter(id: string): void
@@ -42,30 +29,24 @@ interface Actions {
 function ProjectDetail({ project, worker, workspaceId, filter, create, open }: Actions & {
   project: ProjectOverview; worker: WorkerView | undefined
 }) {
-  const [handoff, setHandoff] = useState<{ taskId: string; runId: string }>()
   const draining = useDashboard(state => state.overview?.hub.draining)
-  const { latestTaskId, latestRunId, pointer } = project
+  const { latestTaskId } = project
   return <article className="project-detail">
     <header className="project-header">
       <div><h3>{project.label} <Status project={project} /></h3><small className="muted mono">{key(project)}</small></div>
       <div className="project-actions">
         <button className="primary" data-testid="project-new-task" disabled={draining || worker?.status !== 'active' || !project.allowedAdapters.length}
           onClick={() => create(project)}>＋ 派任务到此项目</button>
-        {latestTaskId && latestRunId && <button data-testid="project-handoff" onClick={() => setHandoff({ taskId: latestTaskId, runId: latestRunId })}>⇄ 换 CLI 接力</button>}
         <button data-testid="project-filter-tasks" aria-pressed={workspaceId === project.workspaceId}
           onClick={() => filter(workspaceId === project.workspaceId ? '' : project.workspaceId)}>只看本项目任务</button>
       </div>
     </header>
     <div className="project-context">
-      {latestTaskId && <button className="text-button" onClick={() => open(latestTaskId)}>最近任务 #{project.latestTaskNo}</button>}
-      {(['lastAccepted', 'lastAttempt'] as const).map(name => pointer?.[name] &&
-        <button className="pill" key={name} onClick={() => open(pointer[name]!.taskId)}>{name} · #{pointer[name]!.taskNo}</button>)}
-      {project.boardCapturedAt !== null && <small>黑板采集于 {formatTime(project.boardCapturedAt)}</small>}
+      {latestTaskId && <button className="text-button" onClick={() => open(latestTaskId)}>打开最近一次任务 #{project.latestTaskNo}</button>}
     </div>
     {project.board ? <ProjectBoard board={project.board} /> : <div className="project-facts">
       <span>共 {project.totalTasks} 项任务 · 成功 {project.succeededTasks} · 失败 {project.failedTasks}</span><Adapters project={project} />
     </div>}
-    {handoff && <ProjectHandoff {...handoff} worker={worker} close={() => setHandoff(undefined)} open={open} />}
   </article>
 }
 

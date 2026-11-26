@@ -4,10 +4,10 @@ import { AuthMeResponse, LoginResponse, TaskDetail } from '@agent-hub/protocol'
 import type { WorkerView } from '@agent-hub/protocol'
 import { emptyResponse, errorText, json, request, sessionExpired, setCsrf } from './api.js'
 import { DashboardConnection } from './connection.js'
-import { duration } from './format.js'
 import { Login } from './Login.js'
 import { MissionDrawer } from './MissionDrawer.js'
 import { Pipeline } from './Pipeline.js'
+import { Today } from './Today.js'
 import { ProjectHub, useProjects } from './ProjectHub.js'
 import { useDashboard } from './store.js'
 import { SystemPage } from './SystemPage.js'
@@ -25,6 +25,7 @@ function Header({ create, approval, logout, activeProjects }: { create: () => vo
     hub?.storageLevel === 'warning' && '数据库容量已达 80%，日志保留期减半',
     hub?.storageLevel === 'critical' && '数据库容量已达 95%，已暂停保存新日志正文，任务状态仍会更新',
   ].filter(Boolean)
+  const pending = overview ? overview.counts.awaiting_approval + overview.counts.awaiting_input : 0
   const metric = (label: string, value: string | number) => <div className="metric"><span>{label}</span><strong>{value}</strong></div>
   return <>
     <header className="command-header" data-testid="command-header">
@@ -37,13 +38,11 @@ function Header({ create, approval, logout, activeProjects }: { create: () => vo
     </header>
     <div className="metrics" data-testid="overview-metrics">
       <div className="metric"><span>飞书长连接</span><strong><i className={'dot ' + (overview?.feishu.state ?? 'disabled')} />{overview ? feishuLabels[overview.feishu.state] : '—'}</strong></div>
-      {metric('活跃项目', activeProjects ?? '—')}
-      {metric('执行中', overview ? overview.counts.running + overview.counts.dispatching + overview.counts.awaiting_input + overview.counts.cancelling : '—')}
-      <button type="button" className="metric approval-metric" data-testid="pending-approval" onClick={approval}>
-        <span>待审批</span><strong>{overview?.counts.awaiting_approval ? <i className="dot red" /> : null}{overview?.counts.awaiting_approval ?? '—'}</strong></button>
-      {metric('今日成功 / 失败', overview ? overview.today.succeeded + ' / ' + overview.today.failed : '—')}
-      {metric('今日成功率', overview?.today.successRate != null ? (overview.today.successRate * 100).toFixed(1) + '%' : '—')}
-      {metric('P50 耗时', duration(overview?.today.p50DurationMs ?? null))}
+      {metric('进行中', overview ? overview.counts.queued + overview.counts.running + overview.counts.dispatching + overview.counts.cancelling : '—')}
+      <button type="button" className="metric approval-metric" data-testid="pending-approval" onClick={approval} title="待审批 + AI 在等你回答">
+        <span>要你处理</span><strong>{pending ? <i className="dot red" /> : null}{overview ? pending : '—'}</strong></button>
+      {metric('今日完成 / 失败', overview ? overview.today.succeeded + ' / ' + overview.today.failed : '—')}
+      {activeProjects !== undefined && activeProjects > 0 && metric('活跃项目', activeProjects)}
     </div>
     {alerts.length > 0 && <div className="hub-alerts warning" role="alert" data-testid="hub-alerts">{alerts.join(' · ')}</div>}
   </>
@@ -86,6 +85,7 @@ function Console({ logout }: { logout: () => Promise<void> }) {
   const [time, setTime] = useState(Date.now)
   const [page, setPage] = useState<'overview' | 'methods' | 'system'>('overview')
   const [lane, setLane] = useState('')
+  const [history, setHistory] = useState(false)
   const [taskId, setTaskId] = useState<string | undefined>(() => /^\/tasks\/(tsk_[0-9A-HJKMNP-TV-Z]{26})\/?$/.exec(window.location.pathname)?.[1])
   const [createDefaults, setCreateDefaults] = useState<TaskDefaults>()
   const [workspaceId, setWorkspaceId] = useState('')
@@ -100,7 +100,7 @@ function Console({ logout }: { logout: () => Promise<void> }) {
   }, [])
   return <div className="console" data-testid="command-center">
     <Header activeProjects={projects.data?.filter(project => project.activeTasks > 0).length}
-      create={() => setCreateDefaults({})} approval={() => { setPage('overview'); setWorkspaceId(''); setLane('approval') }}
+      create={() => setCreateDefaults({})} approval={() => { setPage('overview'); setWorkspaceId(''); setHistory(false) }}
       logout={() => void logout().catch(error => setError(errorText(error)))} />
     {error && <p role="alert" className="error">{error}</p>}
     <nav className="main-tabs" aria-label="指挥台">
@@ -111,8 +111,11 @@ function Console({ logout }: { logout: () => Promise<void> }) {
     <main className="console-body">{page === 'overview' ? <>
       <ProjectHub query={projects} workers={workers} workspaceId={workspaceId} filter={setWorkspaceId} open={setTaskId}
         create={project => setCreateDefaults({ defaultWorkspaceId: project.workspaceId, defaultWorkerId: project.workerId, defaultProfile: 'full' })} />
-      <Pipeline live={live} workers={workers} projects={projects.data ?? []} workspaceId={workspaceId} setWorkspace={setWorkspaceId}
-        now={time + clockOffset} lane={lane} setLane={setLane} open={setTaskId} />
+      {history ? <>
+        <button type="button" className="text-button" data-testid="back-to-today" onClick={() => setHistory(false)}>← 返回今日概览</button>
+        <Pipeline live={live} workers={workers} projects={projects.data ?? []} workspaceId={workspaceId} setWorkspace={setWorkspaceId}
+          now={time + clockOffset} lane={lane} setLane={setLane} open={setTaskId} initialMode="table" />
+      </> : <Today live={live} now={time + clockOffset} workspaceId={workspaceId} open={setTaskId} showHistory={() => setHistory(true)} />}
     </> : page === 'methods' ? <MethodLibrary /> : <SystemPage workers={workers} now={time + clockOffset} open={setTaskId} />}</main>
     {createDefaults && <CreateDialog close={closeCreate} workers={workers} {...createDefaults} />}
     {taskId && <MissionDrawer key={taskId} id={taskId} workers={workers} connection={client} close={closeTask} open={setTaskId} />}

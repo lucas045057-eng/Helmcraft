@@ -4,7 +4,8 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tansta
 import { ApiTokensResponse, AuditResponse, CreateApiTokenResponse, EnrollTokenResponse, FibersResponse,
   PoliciesResponse, ReplacePoliciesResponse, Scope, WorkerView } from '@agent-hub/protocol'
 import { emptyResponse, errorText, json, request, requestWithHeaders, searchParams } from './api.js'
-import { formatTime } from './format.js'
+import { duration, formatTime } from './format.js'
+import { useDashboard } from './store.js'
 import { WorkerFleet } from './WorkerFleet.js'
 import { PersonalProject } from './PersonalProject.js'
 
@@ -149,8 +150,21 @@ function Fibers() {
   </section>
 }
 
+function Stats() {
+  const overview = useDashboard(state => state.overview)
+  if (!overview) return null
+  const item = (label: string, value: string, hint: string) => <div className="metric" title={hint}><span>{label}</span><strong>{value}</strong></div>
+  return <section data-testid="system-stats"><div className="section-heading"><h2>运行统计（今日）</h2></div><div className="metrics">
+    {item('成功率', overview.today.successRate != null ? (overview.today.successRate * 100).toFixed(1) + '%' : '—', '今日结束的任务里成功的比例')}
+    {item('P50 耗时', duration(overview.today.p50DurationMs ?? null), '今日任务耗时的中位数')}
+    {item('并发槽位', overview.slotsUsed + ' / ' + overview.slotsTotal, '所有 Worker 同时能跑的任务数，已占用 / 总数')}
+    {item('在线 Worker', overview.workersOnline + ' / ' + overview.workersTotal, '连上中台、可以接任务的本机节点')}
+  </div></section>
+}
+
 export function SystemPage({ workers, now, open }: { workers: WorkerView[]; now: number; open(id: string): void }) {
   return <div data-testid="system-page" className="system-page">
+    <Stats />
     <WorkerFleet workers={workers} now={now} /><PersonalProject open={open} />
     <div className="system-grid"><Policies /><Workers workers={workers} /><Tokens /><Fibers /><Audit /></div>
   </div>

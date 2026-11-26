@@ -285,3 +285,19 @@ tbody tr:last-child td { border-bottom: 0; }
 .method-probe { margin-top: 20px; }
 .method-suggestion { display: flex; gap: 8px; align-items: center; }
 .muted { opacity: .7; }
+
+/* 今日概览（首页简化） */
+.today { display: grid; gap: 18px; margin-top: 16px; }
+.today-group { display: grid; gap: 8px; }
+.today-group h2 { display: flex; gap: 8px; align-items: center; font-size: 1.05rem; margin: 0; }
+.today-group.attention { border: 1px solid #d9822b; border-radius: 10px; padding: 12px; }
+.today-row { display: grid; gap: 4px; text-align: left; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line, #2a3342); background: var(--panel, transparent); cursor: pointer; }
+.today-row.failed { border-color: #c94a4a; }
+.today-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.today-meta { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: .85rem; }
+.today-hint { font-size: .85rem; opacity: .85; }
+.small { font-size: .8rem; font-weight: normal; }
+.drawer-result pre { white-space: pre-wrap; word-break: break-word; }
+.tech-details { margin-top: 12px; border-top: 1px dashed var(--line, #2a3342); padding-top: 8px; }
+.tech-details > summary { cursor: pointer; opacity: .8; }
+.tech-help { font-size: .85rem; padding-left: 18px; }

@@ -96,6 +96,7 @@ function Interventions({ task, workers, stale, open }: { task: TaskDetail; worke
 export function MissionDrawer({ id, workers, connection, close, open }: { id: string; workers: WorkerView[];
   connection: DashboardConnection; close: () => void; open: (id: string) => void }) {
   const [tab, setTab] = useState<'logs' | 'timeline'>('logs')
+  const [tech, setTech] = useState(false)
   const [pinnedRun, setRun] = useState('')
   const history = useQuery({ queryKey: ['task', id], queryFn: ({ signal }) => request('/tasks/' + id, TaskDetail, { signal }) })
   const detail = useDashboard(state => state.details[id])
@@ -127,7 +128,20 @@ export function MissionDrawer({ id, workers, connection, close, open }: { id: st
       {history.error && <p role="alert" className="error">{errorText(history.error)}</p>}
       {task && <div className="drawer-body">
         {task.method && <p className="pill method-used" data-testid="task-method-used">使用方法：{task.method.name} · r{task.method.revision}{task.method.via === 'suggested' ? '（推荐后确认）' : ''}</p>}
-        <details className="prompt"><summary>任务要求 · {task.workspaceId}</summary><pre>{task.prompt}</pre></details>
+        {task.resultSummary ? <section className="drawer-result" data-testid="drawer-result"><h3>结果</h3><pre>{task.resultSummary}</pre></section>
+          : summary?.lastProgress || task.lastProgress ? <p className="drawer-progress">当前进展：{summary?.lastProgress ?? task.lastProgress}</p> : null}
+        <Interventions task={task} workers={workers} stale={(summary?.version ?? -1) > task.version} open={open} />
+        <details className="prompt"><summary>你的需求 · {task.workspaceId}</summary><pre>{task.prompt}</pre></details>
+        <details className="tech-details" data-testid="tech-details" open={tech} onToggle={event => setTech((event.target as HTMLDetailsElement).open)}>
+        <summary>技术详情（排查问题时用）</summary>
+        <ul className="tech-help muted">
+          <li><b>终端日志</b>：AI 运行时的原始输出，任务出错时先看这里；<b>时间线</b>：任务每一步状态变化的时间。</li>
+          <li><b>黑板快照</b>：项目记忆文件（.board）在这次任务前后的变化。</li>
+          <li><b>验证</b>：任务结束后 Worker 自动运行的检查命令及结果。</li>
+          <li><b>工作区指针</b>：哪一次任务的结果被认作当前可用版本（lastAccepted）。</li>
+          <li><b>换 CLI 接力</b>：让另一个 AI 接着这个任务继续做。</li>
+        </ul>
+        {tech && <>
         <div className="drawer-controls">
           <div className="segmented"><button type="button" data-testid="drawer-logs" aria-pressed={tab === 'logs'} onClick={() => setTab('logs')}>终端日志</button>
             <button type="button" data-testid="drawer-timeline" aria-pressed={tab === 'timeline'} onClick={() => setTab('timeline')}>时间线</button></div>
@@ -140,7 +154,6 @@ export function MissionDrawer({ id, workers, connection, close, open }: { id: st
             <span className="muted"> · {item.actor.name ?? item.actor.id}</span>
             <p>{item.from && item.from + ' → '}{item.to}{item.note && ' · ' + item.note}</p></div></li>)}
         </ol> : run ? <TerminalPane key={runId} buffer={buffer} /> : <div className="empty-panel">任务尚未生成运行记录</div>}
-        {task.resultSummary && <details className="prompt"><summary>结果摘要</summary><pre>{task.resultSummary}</pre></details>}
         {run && <section aria-label="Harness">
           {harness.error && <p role="alert">{errorText(harness.error)}</p>}
           {harness.data && <>{run.harness && <BoardPanel board={harness.data.board} restore={allowHandoff ? prompt => setHandoff({ runId, prompt }) : undefined} />}
@@ -151,7 +164,8 @@ export function MissionDrawer({ id, workers, connection, close, open }: { id: st
         {allowHandoff && <button data-testid="handoff-open" onClick={() => setHandoff({ runId, prompt: '' })}>换 CLI 接力</button>}
         {allowHandoff && run && handoff?.runId === run.id && <HandoffModal key={run.id} task={task} run={run} worker={workers.find(w => w.id === run.workerId)}
           initialIntent={handoff.intent} initialPrompt={handoff.prompt} close={() => setHandoff(undefined)} open={open} />}
-        <Interventions task={task} workers={workers} stale={(summary?.version ?? -1) > task.version} open={open} />
+        </>}
+        </details>
       </div>}
     </aside>
   </div>

@@ -199,20 +199,21 @@ it('shows the latest nonempty project board and dispatches and filters tasks fro
     await pw(center.getByRole('heading', { name: 'ADR-1 本地渲染' })).toBeVisible()
     await center.getByRole('button', { name: '踩坑与规则' }).click()
     await pw(center.getByRole('listitem')).toHaveText('保留图层顺序')
-    await center.getByTestId('project-handoff').click()
-    await pw(client.getByTestId('handoff-submit')).toBeEnabled()
-    await client.getByRole('dialog').getByRole('button', { name: '关闭' }).click()
+    // 项目卡片不再放「换 CLI 接力」，接力只在任务详情的技术详情里
+    await pw(center.getByTestId('project-handoff')).toHaveCount(0)
 
-    const filter = client.getByTestId('task-filter-workspace')
     await center.getByTestId('project-filter-tasks').click()
-    await pw(filter).toHaveValue('forma')
     await pw(client.getByTestId('task-card-' + daily.taskNo)).toHaveCount(0)
     await pw(client.getByTestId('task-card-' + latest.taskNo)).toBeVisible()
+    await client.getByTestId('show-history').click()
+    const filter = client.getByTestId('task-filter-workspace')
+    await pw(filter).toHaveValue('forma')
     await filter.selectOption('daily')
     await pw(center.getByTestId('project-board-tabs')).toHaveCount(0)
-    await pw(client.getByTestId('task-card-' + daily.taskNo)).toBeVisible()
+    await pw(client.getByTestId('task-row-' + daily.taskNo)).toBeVisible()
     await center.getByTestId('project-filter-tasks').click()
     await pw(filter).toHaveValue('')
+    await client.getByTestId('back-to-today').click()
     await forma.click()
     await center.getByTestId('project-new-task').click()
     await pw(client.getByTestId('task-workspace')).toHaveValue('forma')
@@ -251,11 +252,11 @@ it('DASH-2 手动指定 Worker 派单：看板卡片 queued → running → succ
     const taskNo = Number(String(testId).replace('task-card-', ''))
     expect(Number.isInteger(taskNo)).toBe(true)
 
-    // running 阶段：卡片出现在“执行中”泳道
-    await pw(client.getByTestId('lane-running').locator('[data-testid="task-card-' + taskNo + '"]'))
+    // running 阶段：卡片出现在今日概览的“进行中”
+    await pw(client.getByTestId('today-running').locator('[data-testid="task-card-' + taskNo + '"]'))
       .toBeVisible({ timeout: 25_000 })
     await pw(client.getByTestId('task-card-' + taskNo)).toHaveAttribute('data-status', 'running', { timeout: 20_000 })
-    await pw(client.getByTestId('task-card-' + taskNo)).toContainText('pi-dash-2')
+    await pw(client.getByTestId('task-card-' + taskNo)).toContainText('mock') // 简化后的首页卡片只显示 CLI，不显示 Worker ID
     await pw(client.getByTestId('task-card-' + taskNo)).toHaveAttribute('data-status', 'succeeded', { timeout: 30_000 })
     const detail = booted.hub.ctx.orchestrator.getTask(String(taskNo))!
     expect(detail.status).toBe('succeeded')
@@ -278,9 +279,11 @@ it('DASH-3 抽屉终端 结构化 / Raw 切换内容一致', async () => {
     const done = await waitDetail(booted.hub, token, created.id, task => task.status === 'succeeded', 'succeeded')
     const runId = done.runs[0]!.id
     await login(client, ADMIN)
+    await client.getByTestId('show-history').click()
     await client.getByTestId('task-search').fill('#scenario')
-    await client.getByTestId('task-card-' + created.taskNo).click()
+    await client.getByTestId('task-row-' + created.taskNo).click()
     await pw(client.getByTestId('mission-drawer')).toBeVisible({ timeout: 15_000 })
+    await client.getByTestId('tech-details').locator('summary').click()
     await pw(client.getByTestId('terminal-structured')).toBeVisible({ timeout: 15_000 })
     await pw(client.getByTestId('log-count')).not.toHaveText('0 条记录', { timeout: 20_000 })
     const structuredRows = await client.getByTestId('terminal-structured').locator('.log-row').allInnerTexts()
@@ -353,7 +356,8 @@ it('DASH-4 审批覆写 adapter/prompt 并以覆写值执行，时间线留痕',
     expect(executed.timeline.map(entry => entry.event)).toContain('task.approve')
     expect(executed.timeline.some(entry => entry.note?.includes('Prompt 覆写'))).toBe(true)
 
-    // UI 时间线同样留痕
+    // UI 时间线同样留痕（在技术详情里）
+    await client.getByTestId('tech-details').locator('summary').click()
     await client.getByTestId('drawer-timeline').click()
     await pw(client.getByTestId('task-timeline')).toContainText('Prompt 覆写', { timeout: 15_000 })
     await pw(client.getByTestId('task-timeline')).toContainText('task.approve')
@@ -371,8 +375,9 @@ it('DASH-5 取消运行中任务：cancelling → cancelled，按钮禁用状态
       payload: { prompt: '#scenario: slow ms=60000', workspaceId: 'sandbox', adapter: 'mock', profile: 'edit' } }))
     await waitDetail(booted.hub, token, created.id, task => task.status === 'running', 'running')
     await login(client, ADMIN)
+    await client.getByTestId('show-history').click()
     await client.getByTestId('task-search').fill('#scenario')
-    await client.getByTestId('task-card-' + created.taskNo).click()
+    await client.getByTestId('task-row-' + created.taskNo).click()
     await pw(client.getByTestId('mission-drawer')).toBeVisible({ timeout: 15_000 })
     await pw(client.getByTestId('action-cancel')).toBeEnabled({ timeout: 15_000 })
     await client.getByTestId('action-cancel').click()
@@ -484,9 +489,11 @@ it('DASH-8 10 万行日志抽屉滚动流畅（无 > 200ms 长任务）', async 
       .toBe(total)
 
     await login(client, ADMIN)
+    await client.getByTestId('show-history').click()
     await client.getByTestId('task-search').fill('seed')
-    await client.getByTestId('task-card-' + task.taskNo).click()
+    await client.getByTestId('task-row-' + task.taskNo).click()
     await pw(client.getByTestId('mission-drawer')).toBeVisible({ timeout: 20_000 })
+    await client.getByTestId('tech-details').locator('summary').click()
     await pw(client.getByTestId('log-count')).toHaveText('100,000 条记录', { timeout: 60_000 })
 
     // 虚拟列表：DOM 行数必须远小于总行数

@@ -19,10 +19,10 @@ function TaskCard({ task, now, open }: { task: TaskSummary; now: number; open: (
   </button>
 }
 
-export function Pipeline({ live, workers, now, lane, setLane, open, projects, workspaceId, setWorkspace }: { live: Record<string, TaskSummary>; workers: WorkerView[];
+export function Pipeline({ live, workers, now, lane, setLane, open, projects, workspaceId, setWorkspace, initialMode = 'kanban' }: { live: Record<string, TaskSummary>; workers: WorkerView[]; initialMode?: 'kanban' | 'table';
   projects: ProjectOverview[]; workspaceId: string; setWorkspace(id: string): void;
   now: number; lane: string; setLane: (value: string) => void; open: (id: string) => void }) {
-  const [mode, setMode] = useState<'kanban' | 'table'>('kanban')
+  const [mode, setMode] = useState<'kanban' | 'table'>(initialMode)
   const workspaces = new Map(projects.map(project => [project.workspaceId, project.label]))
   const [adapter, setAdapter] = useState('')
   const [keyword, setKeyword] = useState('')
@@ -50,7 +50,7 @@ export function Pipeline({ live, workers, now, lane, setLane, open, projects, wo
   const shownLanes = lane ? lanes.filter(item => item.id === lane) : lanes
   const adapters = [...new Set([...workers.flatMap(worker => worker.adapters.map(item => item.id)), ...filtered.flatMap(t => t.adapter ? [t.adapter] : [])])]
   return <section data-testid="task-pipeline">
-    <div className="section-heading"><h2>任务流水线</h2>
+    <div className="section-heading"><h2>全部任务历史</h2>
       <div className="segmented"><button type="button" aria-pressed={mode === 'kanban'} data-testid="view-kanban" onClick={() => setMode('kanban')}>▦ 看板</button>
         <button type="button" aria-pressed={mode === 'table'} data-testid="view-table" onClick={() => setMode('table')}>☷ 表格</button></div>
     </div>
