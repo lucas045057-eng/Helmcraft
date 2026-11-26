@@ -2,13 +2,30 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { MethodCard, MethodKind, MethodListResponse, MethodSuggestResponse } from '@agent-hub/protocol'
 import type { MethodCard as Card } from '@agent-hub/protocol'
-import { emptyResponse, errorText, json, request } from './api.js'
+import { emptyResponse, errorText as baseErrorText, json, request, RequestError } from './api.js'
 
 // 个人方法库（docs/specs/10-method-library.md）：收藏亲自用过、愿意再用的 Skill 与 SOP。
 type Draft = { name: string; kind: 'skill' | 'sop'; scenario: string; avoid: string; keywords: string; steps: string; done: string }
 const blank: Draft = { name: '', kind: 'skill', scenario: '', avoid: '', keywords: '', steps: '', done: '' }
-const toDraft = (card: Card): Draft => ({ ...card, keywords: card.keywords.join('，') })
-const toBody = (draft: Draft) => ({ ...draft, keywords: draft.keywords.split(/[,，、\s]+/u).map(word => word.trim()).filter(Boolean) })
+// 只取可编辑字段：服务端对方法卡做严格校验，多带 id / revision / examples 会被拒绝
+export const toDraft = (card: Card): Draft => ({ name: card.name, kind: card.kind, scenario: card.scenario, avoid: card.avoid,
+  keywords: card.keywords.join('，'), steps: card.steps, done: card.done })
+export const toBody = (draft: Draft) => ({ name: draft.name.trim(), kind: draft.kind, scenario: draft.scenario, avoid: draft.avoid,
+  steps: draft.steps, done: draft.done, keywords: draft.keywords.split(/[,，、\s]+/u).map(word => word.trim()).filter(Boolean) })
+const reasons: Record<string, string> = { METHOD_NAME_TAKEN: '已有同名方法', METHOD_NOT_FOUND: '方法不存在或已删除',
+  TASK_HAS_NO_RESULT: '这个任务还没有成功结果，不能挂为参照', TOO_MANY_EXAMPLES: '每张卡最多 10 条参照' }
+const fields: Record<string, string> = { name: '名字', steps: '怎么做', scenario: '适用场景', avoid: '不适合', keywords: '关键词', done: '什么算做好', title: '标题', content: '内容' }
+/** 把服务端的校验细节翻成能看懂的一句话。 */
+function errorText(error: unknown) {
+  if (error instanceof RequestError && error.details) {
+    const reason = typeof error.details.reason === 'string' ? reasons[error.details.reason] : undefined
+    if (reason) return reason
+    if (error.status === 409 && error.code === 'VERSION_CONFLICT') return '这张卡刚被改过，请刷新后再保存'
+    const issues = Array.isArray(error.details.issues) ? error.details.issues as { path: string; message: string }[] : []
+    if (issues.length) return issues.map(issue => (fields[issue.path.split('.')[0] ?? ''] ?? issue.path) + '：' + issue.message).join('；')
+  }
+  return baseErrorText(error)
+}
 const date = (ms: number) => new Date(ms).toLocaleDateString()
 
 function Editor({ card, close }: { card?: Card | undefined; close: () => void }) {
