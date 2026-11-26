@@ -1,5 +1,5 @@
-import { canUseCommand, parseCommand } from '@agent-hub/protocol'
-import type { Actor, ParsedCommand, TaskOrigin, TaskStatus } from '@agent-hub/protocol'
+import { canUseCommand, parseCommand, parseMethodMention } from '@agent-hub/protocol'
+import type { Actor, MethodSuggestion, ParsedCommand, TaskOrigin, TaskStatus } from '@agent-hub/protocol'
 import { lt, eq, and } from 'drizzle-orm'
 import type { HubConfig } from '../../config/schema.js'
 import { guardAsync } from '../../kernel/safe.js'
@@ -7,7 +7,11 @@ import { HubError } from '../../services/errors.js'
 import { feishuEventDedupe } from '../store-sqlite/schema.js'
 import type { CardDelivery } from './delivery.js'
 import type { FeishuMessageEvent } from './transport.js'
-import { renderWorkersCard, renderTaskListCard, terminal } from './cards/index.js'
+import { renderMethodSuggestionCard, renderWorkersCard, renderTaskListCard, terminal } from './cards/index.js'
+import { createSuggestion, findMethodByName, listMethods, suggestFor } from '../orchestrator/methods.js'
+import type { CreateTaskInput } from '../../services/orchestrator.js'
+
+export const METHOD_SUGGESTION_TTL_MS = 600_000
 
 export function identity(config: HubConfig['feishu'], openId: string, chatId: string, group: boolean) {
   if (config.ownerOpenIds.includes(openId)) return 'owner'
@@ -74,7 +78,7 @@ export class MessageRouter {
     if (this.draining) return reply('系统维护中，请稍后重试')
     const text = content(m)?.replace(/@_user_\d+\b/g, '').trim()
     const role = identity(config, id, m.chat_id, group)
-    const parsed = text?.startsWith('/') ? parseCommand(text) : undefined
+    const parsed = text?.startsWith('/') && !/^\/m\s/u.test(text) ? parseCommand(text) : undefined
     if (parsed?.ok && parsed.cmd.name === 'whoami' && canUseCommand(parsed.cmd, role, m.chat_type)) return reply(id)
     if (role === 'unauthorized') {
       if (!group && ctx.store.tx(db => {
@@ -91,16 +95,46 @@ export class MessageRouter {
     const actor: Actor = { id, type: role, channel: 'feishu' }
     const origin: TaskOrigin = { source: 'feishu', feishu: { chatId: m.chat_id, chatType: m.chat_type, messageId: m.message_id } }
     const api = ctx.orchestrator
-    const create = async (prompt: string, flags: RunFlags = {}) => {
+    const buildInput = (prompt: string, flags: RunFlags): CreateTaskInput | string => {
       const defaults = config.chatDefaults[m.chat_id]
-      if (!privileged && flags.profile) return reply('仅负责人可指定权限档位')
+      if (!privileged && flags.profile) return '仅负责人可指定权限档位'
       const workspaceId = flags.ws ?? defaults?.workspaceId ?? config.defaultWorkspaceId
-      if (!workspaceId) return reply('请指定工作区。可用工作区：' + [...new Set(api.listWorkers().flatMap(w => w.workspaces.map(ws => ws.id)))].join('、'))
+      if (!workspaceId) return '请指定工作区。可用工作区：' + [...new Set(api.listWorkers().flatMap(w => w.workspaces.map(ws => ws.id)))].join('、')
       const adapter = flags.cli ?? defaults?.adapter
-      const task = await api.createTask({ prompt, origin, workspaceId, profile: flags.profile ?? defaults?.profile ?? config.defaultProfile ?? 'edit',
+      return { prompt, origin, workspaceId, profile: flags.profile ?? defaults?.profile ?? config.defaultProfile ?? 'edit',
         ...(adapter && { adapter }), ...(flags.worker && { requiredWorkerId: flags.worker }),
-        ...(flags.priority !== undefined && { priority: flags.priority }) }, actor)
+        ...(flags.priority !== undefined && { priority: flags.priority }) }
+    }
+    const create = async (prompt: string, flags: RunFlags = {}, method?: { id: string; via: 'named' | 'suggested' }) => {
+      const input = buildInput(prompt, flags)
+      if (typeof input === 'string') return reply(input)
+      const task = await api.createTask({ ...input, ...(method && { methodId: method.id }) }, actor, method ? { methodVia: method.via } : {})
       await delivery.ensure(task.id)
+    }
+    // 方法库推荐（docs/specs/10）：先发确认卡，用户点「用 / 不用」后才创建任务
+    const suggest = async (top: MethodSuggestion, prompt: string) => {
+      const input = buildInput(prompt, {})
+      if (typeof input === 'string') return reply(input)
+      const now = ctx.clock.now()
+      const id = ctx.store.tx(db => createSuggestion(db, { method_id: top.id, actor_json: JSON.stringify(actor), input_json: JSON.stringify(input),
+        chat_id: m.chat_id, message_id: m.message_id, created_at: now, expires_at: now + METHOD_SUGGESTION_TTL_MS }))
+      await delivery.reply(m.chat_id, m.message_id, { type: 'interactive', card: renderMethodSuggestionCard({ id, name: top.name, scenario: top.scenario, prompt }) })
+    }
+    const startNew = async (prompt: string) => {
+      const mention = parseMethodMention(prompt)
+      if (mention) {
+        const card = ctx.store.tx(db => findMethodByName(db, mention.name))
+        if (!card) {
+          const names = ctx.store.tx(db => listMethods(db)).map(item => '『' + item.name + '』').slice(0, 10)
+          return reply('没有找到方法『' + mention.name + '』' + (names.length ? '。现有方法：' + names.join('、') : '，方法库还是空的'))
+        }
+        return create(mention.prompt, {}, { id: card.id, via: 'named' })
+      }
+      if (config.methodSuggestions) {
+        const [top] = ctx.store.tx(db => suggestFor(db, prompt))
+        if (top) return suggest(top, prompt)
+      }
+      return create(prompt)
     }
     const get = (ref: string) => {
       const task = api.getTask(ref, actor)
@@ -174,7 +208,7 @@ export class MessageRouter {
         }
       }
       const binding = (m.parent_id && delivery.binding(m.parent_id)) || (m.root_id && delivery.binding(m.root_id))
-      if (!binding) return await create(text)
+      if (!binding) return await startNew(text)
       const task = get(binding.taskId)
       if (task.status === 'awaiting_input' && task.inputRequest) {
         await api.provideInput(task.id, actor, { expectedVersion: task.version, requestId: task.inputRequest.requestId, answer: text })

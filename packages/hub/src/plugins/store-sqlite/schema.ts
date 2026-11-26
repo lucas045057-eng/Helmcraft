@@ -1,6 +1,7 @@
 import { sqliteTable, text, integer, index, uniqueIndex, primaryKey } from 'drizzle-orm/sqlite-core'
 import type { AnySQLiteColumn } from 'drizzle-orm/sqlite-core'
 import { isNull, isNotNull } from 'drizzle-orm'
+import type { TaskMethod } from '@agent-hub/protocol'
 
 const ts = (name: string) => integer(name)                       // epoch ms
 const bool = (name: string) => integer(name, { mode: 'boolean' })
@@ -19,6 +20,7 @@ export const tasks = sqliteTable('tasks', {
   status: text('status', { enum: ['awaiting_approval', 'queued', 'dispatching', 'running', 'awaiting_input',
     'cancelling', 'succeeded', 'rejected', 'failed', 'timed_out', 'cancelled'] }).notNull(),
   handoffFromRunId: text('handoff_from_run_id'),
+  methodJson: text('method_json', { mode: 'json' }).$type<TaskMethod>(),          // 方法库快照（docs/specs/10）
   harnessRequestJson: text('harness_request_json', { mode: 'json' }).$type<{ v: 1; fromRunId?: string; intent?: 'relay' | 'fix'; requestedModel?: string; overrides?: { blackboard?: boolean | undefined; verify?: boolean | undefined } }>(),
   parentTaskId: text('parent_task_id').references((): AnySQLiteColumn => tasks.id, { onDelete: 'set null' }),
   rootTaskId: text('root_task_id'),                             // 对话链根（自身为根时 = id）
@@ -222,7 +224,7 @@ export const auditLogs = sqliteTable('audit_logs', {
   actorId: text('actor_id').notNull(),
   channel: text('channel', { enum: ['feishu', 'dashboard', 'api', 'system'] }).notNull(),
   action: text('action').notNull(),                             // 'task.submit' | 'task.transition' | 'task.noop' | 'worker.drain' | 'config.applied' | ...
-  targetType: text('target_type', { enum: ['task', 'run', 'worker', 'policy', 'config', 'session', 'token'] }).notNull(),
+  targetType: text('target_type', { enum: ['task', 'run', 'worker', 'policy', 'config', 'session', 'token', 'method'] }).notNull(),
   targetId: text('target_id').notNull(),
   fromStatus: text('from_status'),
   toStatus: text('to_status'),

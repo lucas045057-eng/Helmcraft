@@ -126,6 +126,7 @@ export function MissionDrawer({ id, workers, connection, close, open }: { id: st
         <h2>{task?.title ?? '任务详情'}</h2></div><button type="button" onClick={close} aria-label="关闭" data-testid="drawer-close">×</button></header>
       {history.error && <p role="alert" className="error">{errorText(history.error)}</p>}
       {task && <div className="drawer-body">
+        {task.method && <p className="pill method-used" data-testid="task-method-used">使用方法：{task.method.name} · r{task.method.revision}{task.method.via === 'suggested' ? '（推荐后确认）' : ''}</p>}
         <details className="prompt"><summary>任务要求 · {task.workspaceId}</summary><pre>{task.prompt}</pre></details>
         <div className="drawer-controls">
           <div className="segmented"><button type="button" data-testid="drawer-logs" aria-pressed={tab === 'logs'} onClick={() => setTab('logs')}>终端日志</button>

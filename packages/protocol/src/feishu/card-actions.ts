@@ -11,3 +11,11 @@ export const CardActionValue = z.strictObject({
 })
 
 export type CardActionValue = z.infer<typeof CardActionValue>
+
+/** 方法库推荐确认卡的按钮（docs/specs/10）：确认前不创建任务。 */
+export const MethodSuggestionAction = z.strictObject({
+  v: z.literal(1),
+  a: z.enum(['method_use', 'method_skip']),
+  s: z.string().regex(/^mss_[0-9A-HJKMNP-TV-Z]{26}$/),
+})
+export type MethodSuggestionAction = z.infer<typeof MethodSuggestionAction>

@@ -53,7 +53,7 @@ export function channelFeishu(publicUrl: string, injected?: FeishuTransport, hub
         router.draining = draining
         drain = async () => { router.draining = true; await delivery.updater.flush() }
         onHotUpdate<ChannelConfig>(ctx, ['card', 'ownerOpenIds', 'requesterAllowlist', 'allowedChatIds', 'requesterPolicy',
-          'permissions', 'deliveryMode', 'groupAudience', 'allowGroupCommands', 'defaultProfile', 'requesterReplyPolicy', 'defaultWorkspaceId', 'chatDefaults', 'maxPromptChars', 'staleMessageMs', 'redactionPatterns'], next => {
+          'permissions', 'deliveryMode', 'groupAudience', 'allowGroupCommands', 'defaultProfile', 'requesterReplyPolicy', 'defaultWorkspaceId', 'methodSuggestions', 'chatDefaults', 'maxPromptChars', 'staleMessageMs', 'redactionPatterns'], next => {
           current = next
           delivery.config = next
           router.maxChars = next.maxPromptChars

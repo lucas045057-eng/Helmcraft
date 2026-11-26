@@ -1,3 +1,4 @@
+import { TaskMethod } from './methods.js'
 import { RunHarnessSummary } from './harness.js'
 import { Capability } from '../worker/capabilities.js'
 import { VerificationState } from '../harness/enums.js'
@@ -54,6 +55,7 @@ export const RunView = z.strictObject({
 })
 
 export const TaskDetail = TaskSummary.extend({
+  method: TaskMethod.omit({ block: true }).optional(),
   handoff: z.strictObject({ fromRunId: RunId, fromTaskId: TaskId, fromTaskNo: z.number().int(), intent: z.enum(['relay', 'fix']) }).optional(),
   prompt: z.string(),
   resultSummary: z.string().nullable(),

@@ -203,6 +203,17 @@ export function renderOwnerReviewCard(m: TaskCardModel, gate?: keyof typeof revi
   return fit('#' + m.taskNo + ' · ' + (pending ? '审核结果' : m.resultDeliveryStatus === 'delivered' ? '结果已发送' : '结果未发送'), 'green',
     actions, fields, m.cardMaxBytes ?? 28672)
 }
+/** 方法库推荐：只有点「用」或「不用」后才创建任务。state 为已处理时去掉按钮。 */
+export function renderMethodSuggestionCard(s: { id: string; name: string; scenario: string; prompt: string },
+  state: 'pending' | 'used' | 'skipped' | 'expired' = 'pending'): CardJson {
+  const action = (a: 'method_use' | 'method_skip', label: string) => ({ tag: 'button', text: plain(label), type: a === 'method_use' ? 'primary' : 'default',
+    behaviors: [{ type: 'callback', value: { v: 1, a, s: s.id } }] })
+  const status = { used: '✅ 已按『' + s.name + '』创建任务', skipped: '已按原需求创建任务（不使用方法）', expired: '推荐已过期，请重新发送需求', pending: '' }[state]
+  return fit('要不要用『' + s.name + '』？', state === 'pending' ? 'blue' : 'grey',
+    state === 'pending' ? [{ tag: 'column_set', columns: [{ tag: 'column', elements: [action('method_use', '用')] },
+      { tag: 'column', elements: [action('method_skip', '不用')] }] }] : [],
+    ['需求：' + s.prompt, '适用场景：' + s.scenario, state === 'pending' ? '10 分钟内有效，不点不执行。' : status], 8192)
+}
 export function renderWorkersCard(workers: WorkerView[], limit = 28672): CardJson {
   return fit('Worker 列表', 'blue', [], workers.map(w => w.displayName + ' · ' + w.connection + ' · ' + w.slotsUsed + '/' +
     w.maxConcurrency + ' · ' + w.adapters.map(a => a.id).join('、')), limit)

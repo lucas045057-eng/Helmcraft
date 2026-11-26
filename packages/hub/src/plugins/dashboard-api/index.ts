@@ -16,6 +16,7 @@ import { listAudit } from './audit.js'
 import { runView, owner } from '../orchestrator/views.js'
 import { controlProject } from '../orchestrator/personal-controls.js'
 import { projectReports, projectViews } from '../orchestrator/personal-status.js'
+import { addMethodExample, createMethod, deleteMethod, getMethod, listMethods, removeMethodExample, suggestFor, updateMethod } from '../orchestrator/methods.js'
 
 export const name = 'dashboard-api'
 export const inject = ['http', 'auth', 'orchestrator', 'workers', 'store', 'clock', 'policy']
@@ -176,6 +177,30 @@ export function apply(ctx: Context, config: DashboardConfig) {
     res.header('X-Policy-Revision', String(ctx.policy.revision()))
     return api.PoliciesResponse.parse(ctx.policy.listRules())
   })
+  // 个人方法库（docs/specs/10-method-library.md）
+  const methodId = (params: Record<string, string>) => {
+    if (!api.MethodId.safeParse(params.id).success) throw new HubError('VALIDATION_FAILED', 404, { reason: 'METHOD_NOT_FOUND' })
+    return params.id!
+  }
+  route('GET', '/methods', 'read', req => api.MethodListResponse.parse(store.tx(db =>
+    listMethods(db, typeof (req.query as Record<string, unknown>).q === 'string' ? (req.query as { q: string }).q : undefined))))
+  route('POST', '/methods', 'admin', (req, res, _params, actor) =>
+    res.code(201).send(store.tx(db => createMethod(db, req.body, actor, ctx.clock.now()))))
+  route('POST', '/methods/suggest', 'read', req =>
+    api.MethodSuggestResponse.parse(store.tx(db => suggestFor(db, parse(api.MethodSuggestRequest, req.body).prompt))))
+  route('GET', '/methods/:id', 'read', (_req, _res, params) => store.tx(db => getMethod(db, methodId(params))))
+  route('PUT', '/methods/:id', 'admin', (req, _res, params, actor) => {
+    const { expectedRevision, ...body } = (req.body ?? {}) as { expectedRevision?: number }
+    return store.tx(db => updateMethod(db, methodId(params), body, actor, ctx.clock.now(), expectedRevision))
+  })
+  route('DELETE', '/methods/:id', 'admin', (_req, res, params, actor) => {
+    store.tx(db => deleteMethod(db, methodId(params), actor, ctx.clock.now()))
+    return res.code(204).send()
+  })
+  route('POST', '/methods/:id/examples', 'admin', (req, _res, params, actor) =>
+    store.tx(db => addMethodExample(db, methodId(params), req.body, actor, ctx.clock.now())))
+  route('DELETE', '/methods/:id/examples/:exampleId', 'admin', (_req, _res, params, actor) =>
+    store.tx(db => removeMethodExample(db, methodId(params), params.exampleId!, actor, ctx.clock.now())))
   route('PUT', '/config/policies', 'admin', (req, _res, _params, actor) => {
     const { rules, expectedRevision } = parse(api.ReplacePoliciesRequest, req.body)
     return { revision: ctx.policy.replaceRules(rules, actor, expectedRevision) }

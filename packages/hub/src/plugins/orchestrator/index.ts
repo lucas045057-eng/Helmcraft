@@ -31,6 +31,7 @@ import { existingPlan, findPlanningTask, recordPlanningTask, recordPlanResult } 
 import { beginImplementation, blockProject, executionStep, finishImplementation, managedTask, occupied, projectExecution } from './personal-execution.js'
 import { beginGate, finishGate, gatePhases, personalDispatch, planAdvice, prepareGate, stepCanDispatch } from './personal-gates.js'
 import { finishDelivery } from './personal-delivery.js'
+import { snapshotMethod, withMethod } from './methods.js'
 import { blockUnconfirmedDelivery, closeProject } from './personal-controls.js'
 
 type Effect = TaskEffect | { type: 'pointer.changed'; workerId: string; workspaceId: string } | { type: 'harness.updated' } | { type: 'verification.outcome'; status: 'passed' | 'failed' | 'unverified' | 'skipped' }
@@ -188,6 +189,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       }
       const policy = this.ctx.policy.evaluate({ actor, source, workspaceId: data.workspaceId, adapter: data.adapter,
         profile: data.profile, prompt: data.prompt, chatId: origin?.feishu?.chatId })
+      const method = data.methodId ? snapshotMethod(db, data.methodId, opts.methodVia ?? 'named') : null
       const id = taskId(now)
       const result = reduce(null, { type: 'SUBMIT', actor, decision: policy.decision,
         task: { id, requester: actor, profile: policy.clampedProfile ?? data.profile, maxAttempts: policy.maxAttempts ?? this.config.tasks.maxAttempts } }, { now })
@@ -203,6 +205,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         preferredWorkerId: data.preferredWorkerId ?? null, resumeSessionId: previousRun?.cliSessionId ?? null,
         timeoutMs: data.timeoutMs ?? this.config.tasks.defaultTimeoutMs, maxAttempts: opts.personalPlan || opts.implementProject || opts.gateProject ? 1 : next.maxAttempts,
         policyDecisionJson: policy, errorCode: next.errorCode ?? null, priority: data.priority,
+        methodJson: method,
         approvalDeadlineAt: next.status === 'awaiting_approval' ? now + (policy.approvalTimeoutMs ?? this.config.tasks.approvalTimeoutMs) : null,
         queuedAt: next.status === 'queued' ? now : null, finishedAt: next.status === 'rejected' ? now : null, createdAt: now, updatedAt: now,
       })
@@ -530,7 +533,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     const plan = findPlanningTask(this.db, task.id)
     const step = executionStep(this.db, task.id)
     const payload: RunDispatch = { taskId: task.id, taskNo: task.taskNo, runId: run.id, attempt: run.attempt,
-      adapter: run.adapter as AdapterId, workspaceId: run.workspaceId, profile: task.profile, prompt: task.prompt,
+      adapter: run.adapter as AdapterId, workspaceId: run.workspaceId, profile: task.profile, prompt: withMethod(task.prompt, task.methodJson),
       timeoutMs: task.timeoutMs, idleTimeoutMs: this.config.tasks.idleTimeoutMs, notAfter: run.notAfter,
       ...(plan ? { personal: { role: 'main' as const, projectId: plan.id, binding: JSON.parse(plan.binding_json), planSources: JSON.parse(plan.sources_json) } } :
         step ? { personal: personalDispatch(this.db,step), ...(harness && { harness }) } : harness && { harness }),

@@ -58,7 +58,7 @@ export const HubConfigSchema = z.strictObject({
     requesterReplyPolicy: z.enum(['auto', 'owner_review']).default('auto'), approvalTarget: z.literal('owner_p2p').default('owner_p2p'),
     deliveryMode: z.enum(['hybrid', 'card']).default('card'), groupAudience: z.enum(['requester', 'owner']).default('requester'),
     allowGroupCommands: z.boolean().default(false), defaultProfile: Profile.optional(),
-    defaultWorkspaceId: WorkspaceId.optional(), chatDefaults: z.record(z.string(), z.strictObject({
+    defaultWorkspaceId: WorkspaceId.optional(), methodSuggestions: z.boolean().default(true), chatDefaults: z.record(z.string(), z.strictObject({
       workspaceId: WorkspaceId.optional(), adapter: AdapterId.optional(), profile: Profile.optional(),
     })).default({}), staleMessageMs: ms(600_000),
     card: z.strictObject({ minPatchIntervalMs: ms(3000), minPatchIntervalHighMs: ms(1000), globalPatchQps: ms(5),

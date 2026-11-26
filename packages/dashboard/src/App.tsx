@@ -11,6 +11,7 @@ import { Pipeline } from './Pipeline.js'
 import { ProjectHub, useProjects } from './ProjectHub.js'
 import { useDashboard } from './store.js'
 import { SystemPage } from './SystemPage.js'
+import { MethodLibrary } from './MethodLibrary.js'
 import { readTaskFields, TaskFields } from './TaskForm.js'
 import type { TaskDefaults } from './TaskForm.js'
 
@@ -83,7 +84,7 @@ function Console({ logout }: { logout: () => Promise<void> }) {
   const clockOffset = useDashboard(state => state.clockOffset)
   const live = useDashboard(state => state.tasks)
   const [time, setTime] = useState(Date.now)
-  const [page, setPage] = useState<'overview' | 'system'>('overview')
+  const [page, setPage] = useState<'overview' | 'methods' | 'system'>('overview')
   const [lane, setLane] = useState('')
   const [taskId, setTaskId] = useState<string | undefined>(() => /^\/tasks\/(tsk_[0-9A-HJKMNP-TV-Z]{26})\/?$/.exec(window.location.pathname)?.[1])
   const [createDefaults, setCreateDefaults] = useState<TaskDefaults>()
@@ -104,6 +105,7 @@ function Console({ logout }: { logout: () => Promise<void> }) {
     {error && <p role="alert" className="error">{error}</p>}
     <nav className="main-tabs" aria-label="指挥台">
       <button type="button" aria-current={page === 'overview' ? 'page' : undefined} data-testid="operations-tab" onClick={() => setPage('overview')}>▦ 指挥台</button>
+      <button type="button" aria-current={page === 'methods' ? 'page' : undefined} data-testid="methods-tab" onClick={() => setPage('methods')}>📚 方法库</button>
       <button type="button" aria-current={page === 'system' ? 'page' : undefined} data-testid="system-tab" onClick={() => setPage('system')}>⚙ 系统治理</button>
     </nav>
     <main className="console-body">{page === 'overview' ? <>
@@ -111,7 +113,7 @@ function Console({ logout }: { logout: () => Promise<void> }) {
         create={project => setCreateDefaults({ defaultWorkspaceId: project.workspaceId, defaultWorkerId: project.workerId, defaultProfile: 'full' })} />
       <Pipeline live={live} workers={workers} projects={projects.data ?? []} workspaceId={workspaceId} setWorkspace={setWorkspaceId}
         now={time + clockOffset} lane={lane} setLane={setLane} open={setTaskId} />
-    </> : <SystemPage workers={workers} now={time + clockOffset} open={setTaskId} />}</main>
+    </> : page === 'methods' ? <MethodLibrary /> : <SystemPage workers={workers} now={time + clockOffset} open={setTaskId} />}</main>
     {createDefaults && <CreateDialog close={closeCreate} workers={workers} {...createDefaults} />}
     {taskId && <MissionDrawer key={taskId} id={taskId} workers={workers} connection={client} close={closeTask} open={setTaskId} />}
   </div>

@@ -59,7 +59,9 @@ export function taskDetail(db: Repos, task: TaskRow, getWorker: (id: string) => 
   const policy = task.policyDecisionJson as PolicyOutcome
   const base = task.handoffFromRunId ? db.runs.get(task.handoffFromRunId) : undefined
   return { ...view, ...(base && { handoff: { fromRunId: base.id, fromTaskId: base.taskId,
-    fromTaskNo: db.tasks.get(base.taskId)!.taskNo, intent: task.harnessRequestJson?.intent ?? 'relay' } }), prompt: redact(task.prompt), resultSummary: task.resultSummary,
+    fromTaskNo: db.tasks.get(base.taskId)!.taskNo, intent: task.harnessRequestJson?.intent ?? 'relay' } }),
+    ...(task.methodJson && { method: { id: task.methodJson.id, name: task.methodJson.name, revision: task.methodJson.revision, via: task.methodJson.via } }),
+    prompt: redact(task.prompt), resultSummary: task.resultSummary,
     runs: runs.map(run => runView(run, db)),
     inputRequest: input ? { requestId: input.id, question: input.question,
       ...(Array.isArray(input.optionsJson) && { options: input.optionsJson as string[] }), expiresAt: input.expiresAt } : null,

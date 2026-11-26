@@ -1,3 +1,4 @@
+import { MethodId } from './methods.js'
 import { z } from 'zod'
 import { AdapterId, ErrorCode, FrameId, RunId, Source, TaskId, WorkerId, WorkspaceId } from '../common.js'
 import { PolicyRule, TaskStatus } from '../task.js'
@@ -25,6 +26,7 @@ export const CreateTaskRequest = z.strictObject({
   timeoutMs: z.number().int().min(60_000).max(24 * 3600_000).optional(),
   model: z.string().max(128).optional(),
   notifyFeishuChatId: z.string().optional(),   // 可选：结果同时推送到某飞书会话
+  methodId: MethodId.optional(),               // 可选：本次任务使用的方法卡（docs/specs/10）
 })
 
 export const ApprovalOverrides = z.strictObject({

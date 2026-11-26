@@ -1,10 +1,13 @@
 import { KeyedMutex, stableHash } from '@agent-hub/common'
-import { AdapterId, ApprovalOverrides, CardActionValue } from '@agent-hub/protocol'
+import { AdapterId, ApprovalOverrides, CardActionValue, MethodSuggestionAction } from '@agent-hub/protocol'
 import type { Actor, TaskDetailView } from '@agent-hub/protocol'
 import type { CardDelivery } from './delivery.js'
 import type { CardActionResponse, FeishuCardActionEvent } from './transport.js'
 import { identity } from './router.js'
 import { HubError } from '../../services/errors.js'
+import type { CreateTaskInput } from '../../services/orchestrator.js'
+import { claimSuggestion, getMethod, releaseSuggestion } from '../orchestrator/methods.js'
+import { renderMethodSuggestionCard } from './cards/index.js'
 
 const toast = (content: string, type: CardActionResponse['toast']['type'] = 'info'): CardActionResponse => ({ toast: { content, type } })
 const actionKeys = { handoff: 'followup', fix: 'followup', approve: 'approve', reject: 'reject', cancel: 'cancel', retry: 'retry', input_option: 'input',
@@ -20,6 +23,8 @@ export class ActionHandler {
     const { ctx } = delivery
     const started = Date.now()
     if (!ctx.store.repos.feishu.recordEvent({ key: 'act:' + event.event_id, receivedAt: ctx.clock.now() })) return toast('已处理')
+    const method = MethodSuggestionAction.safeParse(event.action.value)
+    if (method.success) return this.handleMethodSuggestion(event, method.data)
     const parsed = CardActionValue.safeParse(event.action.value)
     if (!parsed.success) return toast('卡片已过期', 'error')
     const { a, t, ver, opt, req } = parsed.data
@@ -115,6 +120,34 @@ export class ActionHandler {
         timer = setTimeout(() => { timedOut = true; resolve(toast('已提交')) }, Math.max(0, 2000 - (Date.now() - started)))
       })])
     } finally { clearTimeout(timer); resumePatch() }
+  }
+  /** 方法库推荐卡：只有原需求人能确认；领取是原子的，重复点击只生效一次（docs/specs/10）。 */
+  private async handleMethodSuggestion(event: FeishuCardActionEvent, value: MethodSuggestionAction): Promise<CardActionResponse> {
+    const { ctx } = this.delivery
+    const now = ctx.clock.now()
+    const peek = ctx.store.tx(db => db.prepare('SELECT actor_json, method_id, input_json FROM method_suggestions WHERE id = ?').get(value.s)) as
+      { actor_json: string; method_id: string; input_json: string } | undefined
+    if (!peek) return toast('卡片已过期', 'error')
+    const actor = JSON.parse(peek.actor_json) as Actor
+    const input = JSON.parse(peek.input_json) as CreateTaskInput
+    const name = ctx.store.tx(db => { try { return getMethod(db, peek.method_id).name } catch { return undefined } })
+    const view = (state: Parameters<typeof renderMethodSuggestionCard>[1]) => ({ type: 'raw' as const,
+      data: renderMethodSuggestionCard({ id: value.s, name: name ?? '已删除的方法', scenario: '', prompt: input.prompt }, state) })
+    if (event.operator.open_id !== actor.id) return toast('只有发起需求的人可以选择', 'error')
+    const claimed = ctx.store.tx(db => claimSuggestion(db, value.s, now))
+    if (claimed === 'used') return toast('已处理')
+    if (claimed === 'expired' || !claimed) return { ...toast('推荐已过期，请重新发送需求', 'error'), card: view('expired') }
+    const use = value.a === 'method_use' && name !== undefined
+    try {
+      const task = await ctx.orchestrator.createTask(use ? { ...input, methodId: peek.method_id } : input, actor, use ? { methodVia: 'suggested' } : {})
+      await this.delivery.ensure(task.id)
+    } catch (error) {
+      ctx.store.tx(db => releaseSuggestion(db, value.s))
+      if (!(error instanceof HubError)) throw error
+      return toast(error.message, 'error')
+    }
+    if (value.a === 'method_use' && !use) return { ...toast('方法已被删除，已按原需求创建任务', 'info'), card: view('skipped') }
+    return { ...toast(use ? '已按『' + name + '』创建任务' : '已按原需求创建任务', 'success'), card: view(use ? 'used' : 'skipped') }
   }
 }
 function option(task: TaskDetailView, request?: string, opt?: string) {

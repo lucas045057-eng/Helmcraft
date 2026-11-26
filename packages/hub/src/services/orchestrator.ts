@@ -2,7 +2,7 @@ import type { TaskRow } from './store.js'
 import type { PersonalPlanRequest, ProjectOverview } from '@agent-hub/protocol'
 import type { AcceptRunRequest, HandoffPreview, HandoffPreviewQuery, HandoffTaskRequest, RunHarnessView, WorkspacePointerView, Actor, ApprovalOverrides, CreateTaskRequest, OverviewView, TaskDetailView, TaskOrigin, TaskView, TaskListQuery, TaskListResponse, LogsQuery, LogsResponse, DeliverResultRequest } from '@agent-hub/protocol'
 export type CreateTaskInput = Pick<CreateTaskRequest, 'prompt' | 'workspaceId'> & Partial<CreateTaskRequest> & { origin?: TaskOrigin }
-export interface CreateOptions { idempotencyKey?: string | undefined; personalPlan?: PersonalPlanRequest; implementProject?: string; gateProject?: string }
+export interface CreateOptions { idempotencyKey?: string | undefined; personalPlan?: PersonalPlanRequest; implementProject?: string; gateProject?: string; methodVia?: 'named' | 'suggested' }
 export interface VersionOptions { expectedVersion?: number | undefined }
 export interface ApprovalOptions extends VersionOptions { overrides?: ApprovalOverrides | undefined; force?: boolean | undefined }
 export interface ReasonOptions extends VersionOptions { reason?: string | undefined }
