@@ -39,4 +39,4 @@ it('packages the full proposed change and refuses a drifted read-only reply whil
     writeFileSync(join(root,'late.txt'),'late')
     expect(()=>review.finish(reply)).toThrow(/changed/)
   }finally{rmSync(root,{recursive:true,force:true})}
-})
+}, 30_000) // 一连串 git 命令在 Windows CI 上常超过默认 5 秒
