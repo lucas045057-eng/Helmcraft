@@ -29,6 +29,23 @@ describe('method helpers', () => {
     expect(suggestMethods('任何东西', [card({ name: '无场景', steps: 'x' })])).toEqual([])
   })
 
+  it('is calibrated on everyday phrasing: recommends without the exact keyword and stays quiet on unrelated work', () => {
+    const cards = [
+      card({ id: 'mtd_' + '1'.repeat(26), name: '给外行画流程图', scenario: '想让不懂技术的人看懂一条流程：消息或数据从哪里进来、经过谁、最后到哪里',
+        avoid: '写代码、修 bug、改功能', keywords: ['流程图', 'archify', '架构图'] }),
+      card({ id: 'mtd_' + '2'.repeat(26), name: '比赛调研', scenario: '找近期的黑客松和编程比赛，核对报名截止日期、参赛条件和官网来源', keywords: ['黑客松', '比赛'] }),
+      card({ id: 'mtd_' + '3'.repeat(26), name: '新人项目讲解包', scenario: '有新人加入项目，需要快速了解项目现状、主流程和容易踩的坑', keywords: ['新人', '入职'] }),
+    ]
+    const top = (prompt: string) => suggestMethods(prompt, cards)[0]?.name
+    expect(top('帮我给新同事画个图，让不懂技术的人看懂飞书消息是怎么流到 CLI 的')).toBe('给外行画流程图')
+    expect(top('用外行能看懂的方式讲讲数据从哪里进来到哪里去')).toBe('给外行画流程图')
+    expect(top('帮我找几个下个月截止的编程比赛')).toBe('比赛调研')
+    expect(top('来了个新人，帮他快速了解一下 Forma 项目')).toBe('新人项目讲解包')
+    for (const prompt of ['把登录按钮改成蓝色', '修一下支付回调的 bug', '今天天气怎么样', '重构一下数据库模块', '写代码实现流程图组件的拖拽']) {
+      expect(suggestMethods(prompt, cards), prompt).toEqual([])
+    }
+  })
+
   it('renders the method block with expanded references and clipped examples', () => {
     const block = renderMethodBlock({ ...flowchart, kind: 'sop', revision: 3, examples: [{ title: '上次', content: 'y'.repeat(2000) }] },
       [{ name: '读黑板', steps: '读取 .board/PROJECT_STATE.md', done: '' }])

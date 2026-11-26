@@ -63,19 +63,20 @@ const overlap = (query: Set<string>, target: Set<string>) => {
   for (const gram of target) if (query.has(gram)) hit++
   return hit / Math.min(target.size, 24)
 }
-export const SUGGEST_THRESHOLD = 0.3
+// 按真实说法校准（6 条正例全中、6 条反例 0 误报）；推荐只是提示，确认后才生效，所以宁可多问一次。
+export const SUGGEST_THRESHOLD = 0.15
 
-/** 确定性推荐：名字/关键词/适用场景加权重叠，命中「不适合」的卡不推荐。 */
+/** 确定性推荐：名字/关键词/适用场景加权重叠；「不适合」按短语逐个判断，命中任一短语即不推荐。 */
 export function suggestMethods(prompt: string, cards: Pick<MethodCard, 'id' | 'name' | 'scenario' | 'avoid' | 'keywords'>[],
-  limit = 3): MethodSuggestion[] {
+  limit = 3, threshold = SUGGEST_THRESHOLD): MethodSuggestion[] {
   const query = bigrams(prompt)
   return cards.flatMap(card => {
     if (!card.scenario && !card.keywords.length) return []
-    const avoid = card.avoid ? overlap(query, bigrams(card.avoid)) : 0
-    if (avoid >= 0.5) return []
+    const phrases = card.avoid.split(/[、,，;；\n]+/u).map(phrase => phrase.trim()).filter(phrase => [...phrase].length >= 2)
+    if (phrases.some(phrase => overlap(query, bigrams(phrase)) >= 0.75)) return []
     const keyword = card.keywords.length ? Math.max(...card.keywords.map(word => overlap(query, bigrams(word)))) : 0
     const score = Math.min(1, 0.6 * overlap(query, bigrams(card.scenario)) + 0.25 * keyword + 0.15 * overlap(query, bigrams(card.name)))
-    return score >= SUGGEST_THRESHOLD ? [{ id: card.id, name: card.name, scenario: card.scenario, score: Math.round(score * 1000) / 1000 }] : []
+    return score >= threshold ? [{ id: card.id, name: card.name, scenario: card.scenario, score: Math.round(score * 1000) / 1000 }] : []
   }).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)).slice(0, limit)
 }
 
