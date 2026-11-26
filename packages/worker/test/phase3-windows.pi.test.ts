@@ -26,7 +26,7 @@ import { identityPermissionsArePrivate, loadIdentity, readIdentity } from '../sr
 import { Journal } from '../src/runner/journal.js'
 import { RunManager } from '../src/runner/run-manager.js'
 import { mapWorkspaceFile, resolveWorkspaceSubdir } from '../src/security/workspace.js'
-import { powershell, psArgs, psLiteral } from '../src/windows-powershell.js'
+import { powershell, psArgs, psEnv, psLiteral } from '../src/windows-powershell.js'
 
 const win = process.platform === 'win32'
 const dirs: string[] = []
@@ -49,7 +49,7 @@ function decodeWindows(buf: Buffer): string {
 }
 
 function ps(script: string): string {
-  return execFileSync(powershell, psArgs(script), { encoding: 'utf8', shell: false, windowsHide: true,
+  return execFileSync(powershell, psArgs(script), { encoding: 'utf8', shell: false, windowsHide: true, env: psEnv(),
     stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 }
 

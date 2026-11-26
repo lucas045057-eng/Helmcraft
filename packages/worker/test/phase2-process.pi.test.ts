@@ -11,6 +11,7 @@ import type { WebSocket } from 'ws'
 import { stringify } from 'yaml'
 import { describe, expect, it } from 'vitest'
 import { loadIdentity } from '../src/identity.js'
+import { psEnv } from '../src/windows-powershell.js'
 import type { WorkerIdentity } from '../src/identity.js'
 import { assertInvariants, assertRunLogContinuity, ChaosProxy } from '../../hub/test/pi/harness.js'
 import { enroll, startHub, waitFor, wsUrl } from './pi/worker-harness.js'
@@ -27,7 +28,7 @@ function rssBytes(pid: number): number {
     const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     const out = execFileSync(powershell,
       ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${pid}).WorkingSet64`],
-      { encoding: 'utf8', timeout: 10_000, windowsHide: true, shell: false })
+      { encoding: 'utf8', timeout: 10_000, windowsHide: true, shell: false, env: psEnv() })
     bytes = Number(out.trim())
   } else {
     bytes = Number(execFileSync('ps', ['-o', 'rss=', '-p', String(pid)], { encoding: 'utf8', timeout: 10_000 }).trim()) * 1024
