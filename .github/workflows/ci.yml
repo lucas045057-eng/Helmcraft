@@ -22,3 +22,9 @@ jobs:
       - run: pnpm lint
       - run: pnpm depcheck
       - run: pnpm test --maxWorkers=2
+        env:
+          # The Windows runner's default TEMP is an 8.3 short path (C:\Users\RUNNER~1\...). Tests that build a
+          # Worker config straight from tmpdir() would then trip the "workspace root changed" guard, which
+          # production avoids by canonicalising paths in loadWorkerConfig. Use the runner's long-path temp dir.
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}

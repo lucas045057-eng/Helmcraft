@@ -14,7 +14,7 @@ import { WorkerConfigSchema } from '../src/config/schema.js'
 import { identityPermissionsArePrivate, loadIdentity } from '../src/identity.js'
 import { Journal } from '../src/runner/journal.js'
 import { RunManager } from '../src/runner/run-manager.js'
-import { powershell, psArgs, psLiteral } from '../src/windows-powershell.js'
+import { powershell, psArgs, psEnv, psLiteral } from '../src/windows-powershell.js'
 import { stringify } from 'yaml'
 
 const dirs: string[] = []
@@ -151,7 +151,7 @@ $task = Get-ScheduledTask -TaskName ${psLiteral(task)} -TaskPath '\\'
 $task.Principal.RunLevel.ToString()
 ([System.Security.Principal.NTAccount] $task.Triggers[0].UserId).Translate([System.Security.Principal.SecurityIdentifier]).Value
 [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-`), { encoding: 'utf8', windowsHide: true, shell: false }).trim().split(/\r?\n/)
+`), { encoding: 'utf8', windowsHide: true, shell: false, env: psEnv() }).trim().split(/\r?\n/)
     expect(actual[0]).toBe('Limited')
     expect(actual[1]).toBe(actual[2])
     const encoded = /-EncodedCommand ([A-Za-z0-9+/=]+)/.exec(xml)?.[1]
