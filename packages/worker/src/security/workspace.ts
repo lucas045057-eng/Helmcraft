@@ -1,5 +1,6 @@
 import { lstatSync, realpathSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve, sep, win32 } from 'node:path'
+import { projectOf } from '@agent-hub/protocol'
 
 const reserved = /^(?:con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:[ .]*\.|$)/iu
 const control = /[\x00-\x1f\x7f]/u
@@ -43,6 +44,13 @@ export function resolveWorkspaceSubdir(root: string, subdir = '.'): string {
   const directory = realpathSync.native(path)
   if (!withinWorkspace(root, directory) || !statSync(directory).isDirectory()) throw new Error('Working directory escapes workspace')
   return directory
+}
+
+/** 黑板所在目录：任务 subdir 的第一段（项目文件夹）；没有项目、文件夹不存在或越界时退回工作区根目录。 */
+export function projectBoardRoot(root: string, subdir?: string): string {
+  const project = projectOf(subdir)
+  if (!project) return root
+  try { return resolveWorkspaceSubdir(root, project) } catch { return root }
 }
 
 export function mapWorkspaceFile(root: string, cwd: string, path: string): string {

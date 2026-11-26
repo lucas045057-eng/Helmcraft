@@ -245,18 +245,30 @@ it('lists the project folders inside a workspace, scopes the console to it and d
     await eventually(async () => (await listed()).some(p => p.subdir === 'Notes'), { timeoutMs: 5000, label: 'Notes listed' })
     const make = (workspaceId: string, prompt: string, subdir?: string) =>
       hub.ctx.orchestrator.createTask({ workspaceId, prompt, profile: 'edit', adapter: 'mock', ...(subdir && { subdir }) }, owner)
+    // 黑板按项目分开：Forma 里跑出的黑板只挂在 Forma 卡片上，不算工作区根目录的
+    const boarded = await make('soren', mockPrompt, 'Forma')
+    const board = snapshot()
+    for (const file of board.files) Object.assign(file, { status: 'present', bytes: 9, lines: 1, content: file.file === 'PROJECT_STATE.md'
+      ? '# PROJECT STATE\n## Summary\nForma 黑板' : '# x', schemaOk: true, sha256: 'b'.repeat(64) })
+    const before = snapshot('old')
+    before.capturedAt = board.capturedAt - 1
+    await finish(hub, worker, await dispatch(worker, boarded.id), before, board)
+    const boards = Object.fromEntries((await listed()).filter(p => p.workspaceId === 'soren').map(p => [p.subdir ?? '', p.board?.files.length ?? 0]))
+    expect(boards).toEqual({ '': 0, Forma: board.files.length, Notes: 0 })
     const forma = await make('soren', 'Forma 任务', 'Forma/src')
     const daily = await make('daily', '日常任务')
     expect((await listed()).filter(p => p.workspaceId === 'soren').map(p => [p.subdir ?? null, p.totalTasks]))
-      .toEqual(expect.arrayContaining([[null, 1], ['Forma', 1], ['Notes', 0]]))
+      .toEqual(expect.arrayContaining([[null, 2], ['Forma', 2], ['Notes', 0]]))
 
     await login(client, ADMIN)
     const center = client.getByTestId('project-hub')
     await pw(center.getByTestId('project-workspace')).toHaveValue('soren')
     await pw(center.locator('.project-card')).toHaveCount(2)
+    await pw(center.getByRole('button', { name: /^Forma/u })).toContainText('Forma 黑板')
     await pw(client.getByTestId('task-card-' + forma.taskNo)).toBeVisible()
     await pw(client.getByTestId('task-card-' + daily.taskNo)).toHaveCount(0)
     await center.getByRole('button', { name: /^Forma/u }).click()
+    await pw(center.getByTestId('project-board-tabs')).toBeVisible()
     await center.getByTestId('project-filter-tasks').click()
     await pw(client.getByTestId('task-card-' + forma.taskNo)).toBeVisible()
     await center.getByRole('button', { name: /^Notes/u }).click()

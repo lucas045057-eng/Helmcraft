@@ -34,14 +34,16 @@ export function preview(db: Repos, task: TaskRow, source: ReturnType<typeof hand
   if (!ready?.some(a => a.id === target)) warnings.push('ADAPTER_NOT_READY')
   if (facts.continuity) warnings.push(facts.continuity.interleavedUnknown ? 'INTERLEAVED_UNKNOWN' : 'INTERLEAVED')
   if (!board || board.dir !== 'present' || !board.files.some(f => f.content !== undefined)) warnings.push('BOARD_UNAVAILABLE')
-  const prefix = '../'.repeat(task.subdir?.split('/').filter(s => s && s !== '.').length ?? 0)
+  // 有项目文件夹时黑板在 <项目>/.board，路径相对项目文件夹计算
+  const parts = task.subdir?.split(/[\\/]/u).filter(s => s && s !== '.') ?? []
+  const prefix = '../'.repeat(Math.max(0, parts.length - 1))
   const boardDir = board?.dir ?? 'absent'
   const agentsMd = board?.agentsMd.status ?? 'absent'
   const promptPreview = composeHarnessPrompt({ adapter: facts.currentRun.adapter, nonce: PREVIEW_NONCE, userPrompt: HANDOFF_DEFAULT_PROMPTS[intent],
     mode: resume ? 'resume' : 'handoff', trust: source.trust, board: !boardEnabled ? 'off' : task.profile === 'readonly' ? 'read' : 'write',
     bootstrap: source.trust === 'owner' && boardEnabled && task.profile !== 'readonly' && !resume && board?.dir === 'absent', boardDir, agentsMd,
     paths: { board: prefix + '.board', agents: prefix + 'AGENTS.md' }, verifyCommandIds: [],
-    factsJson: renderFactsJson(facts, { capturedAt: board?.capturedAt ?? now, cwd: task.subdir ?? '.', agentsMd, board: { dir: boardDir,
+    factsJson: renderFactsJson(facts, { capturedAt: board?.capturedAt ?? now, cwd: parts.slice(1).join('/') || '.', agentsMd, board: { dir: boardDir,
       files: board?.files.map(f => ({ file: f.file, bytes: f.bytes, status: f.status, budget: BOARD_FILES[f.file].budgetBytes, overBudget: f.overBudget, schemaOk: f.schemaOk })) ?? [] } }),
     handoff: { fromRunId: from.id, fromTaskNo: task.taskNo, fromAdapter: from.adapter, intent },
     ...(facts.continuity && { continuity: { ...facts.continuity, interleavedUnknown: !!facts.continuity.interleavedUnknown } }),

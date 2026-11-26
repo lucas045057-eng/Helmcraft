@@ -1,5 +1,6 @@
 import { realpathSync, statSync } from 'node:fs'
 import { relative, resolve, sep } from 'node:path'
+import { isBoardPath } from '@agent-hub/protocol'
 import type { Workspace } from '../config/schema.js'
 import { withinWorkspace, resolveWorkspaceSubdir } from '../security/workspace.js'
 import { compileGlob, manifestKey } from './glob.js'
@@ -27,5 +28,5 @@ export function sensitivePaths(root: string, config: Workspace['harness']) {
       } catch { /* The next snapshot checks newly created argument files. */ }
     }
   }
-  return (path: string) => !manifestKey(path).startsWith('.board/') && (files.has(manifestKey(path)) || patterns.some(re => re.test(path)))
+  return (path: string) => !isBoardPath(manifestKey(path)) && (files.has(manifestKey(path)) || patterns.some(re => re.test(path)))
 }

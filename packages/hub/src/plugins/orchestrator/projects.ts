@@ -8,6 +8,9 @@ type Activity = Pick<ProjectOverview, 'workerId' | 'workspaceId' | 'activeTasks'
 
 const key = (workerId: string, workspaceId: string) => workerId + '/' + workspaceId
 
+const boardOf = (snapshot: { snapshot: unknown; capturedAt: number } | undefined) =>
+  ({ board: (snapshot?.snapshot as BoardSnapshot | undefined) ?? null, boardCapturedAt: snapshot?.capturedAt ?? null })
+
 export function listProjects(db: Repos, workers: WorkerView[]): ProjectOverview[] {
   const pointers = new Map(db.pointers.list().map(row => [key(row.workerId, row.workspaceId), row]))
   const nodes = new Map(workers.map(worker => [worker.id, worker]))
@@ -59,12 +62,11 @@ export function listProjects(db: Repos, workers: WorkerView[]): ProjectOverview[
     const pointer = pointers.get(id)
     const workerId = entry?.worker.id ?? pointer!.workerId
     const workspaceId = entry?.ws.id ?? pointer!.workspaceId
-    const snapshot = db.snapshots.latestForWorkspace(workerId, workspaceId)
     projects.push({
       workerId, workspaceId, label: entry?.ws.label || workspaceId, isGitRepo: entry?.ws.isGitRepo ?? false,
       maxProfile: entry?.ws.maxProfile ?? 'readonly', allowedAdapters: entry?.ws.allowedAdapters ?? [],
       workerOnline: nodes.get(workerId)?.connection === 'online', pointer: pointer ? pointerView(db, pointer) : null,
-      board: (snapshot?.snapshot as BoardSnapshot | undefined) ?? null, boardCapturedAt: snapshot?.capturedAt ?? null,
+      ...boardOf(db.snapshots.latestForWorkspace(workerId, workspaceId)),
       activeTasks: 0, totalTasks: 0, succeededTasks: 0, failedTasks: 0, lastActiveAt: null,
       latestTaskId: null, latestTaskNo: null, latestAdapter: null, latestRunId: null, latestVerification: null,
       ...stats.get(id),
@@ -72,10 +74,11 @@ export function listProjects(db: Repos, workers: WorkerView[]): ProjectOverview[
     for (const sub of entry?.ws.projects ?? []) projects.push({
       workerId, workspaceId, subdir: sub.dir, label: sub.dir, isGitRepo: sub.isGitRepo,
       maxProfile: entry!.ws.maxProfile, allowedAdapters: entry!.ws.allowedAdapters,
-      workerOnline: nodes.get(workerId)?.connection === 'online', pointer: null, board: null, boardCapturedAt: null,
+      workerOnline: nodes.get(workerId)?.connection === 'online', pointer: null,
       activeTasks: 0, totalTasks: 0, succeededTasks: 0, failedTasks: 0, lastActiveAt: null,
       latestTaskId: null, latestTaskNo: null, latestAdapter: null, latestRunId: null, latestVerification: null,
       ...subStats.get(id + '/' + sub.dir),
+      ...boardOf(db.snapshots.latestForWorkspace(workerId, workspaceId, sub.dir)),
     })
   }
   return projects.sort((a, b) => Number(!!b.board) - Number(!!a.board) ||

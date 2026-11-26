@@ -5,6 +5,8 @@ export const BoardChange = z.enum(['unchanged', 'modified', 'created', 'deleted'
 export type BoardChange = z.infer<typeof BoardChange>
 
 export const BOARD_DIR = '.board'
+/** 工作区内任一层的 .board/ 都是黑板（项目文件夹各有一份：Forma/.board/…） */
+export const isBoardPath = (key: string) => /(^|\/)\.board\//u.test(key)
 export const BOARD_TEMPLATES = {
   'HANDOFF.md': `<!-- agent-hub:board v1 file=HANDOFF.md budget=4096B -->
 # HANDOFF

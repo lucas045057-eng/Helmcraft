@@ -1,5 +1,6 @@
 import type { BoardSnapshot, HarnessApplied, HarnessDirective, Profile, PromptDigest, RunEvent } from '@agent-hub/protocol'
 
+import { relative, sep } from 'node:path'
 import type { Workspace } from '../config/schema.js'
 import { scanManifest, diffManifest, type Manifest } from './manifest.js'
 import { sensitivePaths } from './tamper.js'
@@ -33,8 +34,9 @@ export function computeApplied(directive: HarnessDirective, local: { blackboard:
 
 type Post = Omit<Extract<RunEvent, { kind: 'workspace' }>, 'seq' | 'ts'>
 export async function capturePost(session: HarnessSession, root: string, localHarness: Workspace['harness'],
-  knownSecrets: Record<string, string>, patterns: string[], profile: Profile, writerChanged: () => boolean): Promise<Post> {
-  const post = session.pre && await readBoard(root, knownSecrets, patterns)
+  knownSecrets: Record<string, string>, patterns: string[], profile: Profile, writerChanged: () => boolean, boardRoot = root): Promise<Post> {
+  const post = session.pre && await readBoard(boardRoot, knownSecrets, patterns)
+  const boardPrefix = relative(root, boardRoot).split(sep).join('/')
   const event: Post = { kind: 'workspace', round: session.round, ...(post && { board: post }) }
   if (session.manifest && session.sensitive) {
     const current = sensitivePaths(root, localHarness)
@@ -46,7 +48,7 @@ export async function capturePost(session: HarnessSession, root: string, localHa
     const paths = new Set(event.changes?.sample.map(p => p.path))
     for (const [i, file] of (post?.files ?? []).entries()) {
       const before = session.pre?.files[i]
-      if (before?.status !== file.status || before.sha256 !== file.sha256) paths.add('.board/' + file.file)
+      if (before?.status !== file.status || before.sha256 !== file.sha256) paths.add((boardPrefix ? boardPrefix + '/' : '') + '.board/' + file.file)
     }
     if (session.writerActive || writerChanged() || event.changes?.truncated) event.readonlyCheck = 'inconclusive'
     else {

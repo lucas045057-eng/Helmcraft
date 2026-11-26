@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeClock, runId, taskId } from '@agent-hub/common'
@@ -17,9 +17,11 @@ afterEach(async () => { manager?.cancelAll(); await manager?.awaitRuns(); rmSync
 const write = (path: string, content = 'v1') => ({ op: 'write', path, content })
 const script = (js: string, id = 'check') => ({ id, argv: ['node', '-e', js] })
 async function launch(options: { commands?: unknown[]; ops?: unknown[]; fixOps?: unknown[]; failFast?: boolean; retries?: number; timeoutMs?: number;
-  adapter?: CliAdapter; exposed?: boolean; readonly?: boolean; trust?: 'owner' | 'requester'; scenario?: string; maxFiles?: number } = {}) {
+  adapter?: CliAdapter; exposed?: boolean; readonly?: boolean; trust?: 'owner' | 'requester'; scenario?: string; maxFiles?: number
+  subdir?: string; setup?: (root: string) => void } = {}) {
   const root = join(base, 'repo')
   mkdirSync(root)
+  options.setup?.(root)
   const cfg = WorkerConfigSchema.parse({ workerId: 'test-worker', hub: { url: 'ws://localhost:9999' },
     security: { allowedEnvOverrideKeys: ['FROM_HUB'] }, adapters: { mock: { enabled: true, env: { ANTHROPIC_API_KEY: 'adapter-only' } } },
     workspaces: [{ id: 'repo', label: 'Repo', path: root, maxProfile: 'full', allowedAdapters: ['mock'],
@@ -35,7 +37,7 @@ async function launch(options: { commands?: unknown[]; ops?: unknown[]; fixOps?:
   const encode = (ops: unknown[]) => Buffer.from(JSON.stringify(ops)).toString('base64url')
   const cmd = RunDispatch.parse({ runId: runId(), taskId: taskId(), taskNo: 1, attempt: 1, workspaceId: 'repo', adapter: 'mock',
     profile: options.readonly ? 'readonly' : 'edit', timeoutMs: options.timeoutMs ?? 300000, idleTimeoutMs: 10000, notAfter: 99999,
-    origin: { source: 'dashboard', actorType: 'owner' }, env: { FROM_HUB: 'dev-only' },
+    origin: { source: 'dashboard', actorType: 'owner' }, env: { FROM_HUB: 'dev-only' }, ...(options.subdir && { subdir: options.subdir }),
     harness: { v: 1, trust: options.trust ?? 'owner', inject: 'fresh', board: 'write', bootstrap: false, verify: { autoFixMaxRetries: options.retries ?? 0 } },
     prompt: '#scenario:' + (options.scenario ?? 'fs') + ' harness=1 ops=' + encode(options.ops ?? [write('src.txt')]) + ' fixOps=' + encode(options.fixOps ?? []) })
   manager.accept(cmd, clock.now())()
@@ -106,6 +108,23 @@ it('VF-5 bounds the failed command tail by both lines and characters', async () 
   expect(tail.split('\n').length).toBeLessThanOrEqual(64)
   expect(tail).toContain('255 ')
 })
+it('keeps one blackboard per project folder: a task in Forma reads and writes Forma/.board only', async () => {
+  const calls: InvocationInput[] = []
+  const adapter: CliAdapter = { ...mockAdapter, buildInvocation(input) { calls.push(input); return mockAdapter.buildInvocation(input) } }
+  const board = (dir: string, notes: string) => { mkdirSync(join(dir, '.board'), { recursive: true }); writeFileSync(join(dir, '.board', 'HANDOFF.md'), notes) }
+  const run = await launch({ adapter, subdir: 'Forma', ops: [write('.board/HANDOFF.md', 'forma updated')], setup: root => {
+    board(root, 'root notes'); board(join(root, 'Forma'), 'forma notes') } })
+  // 只改了项目黑板 → 仍算「只动了黑板」，不触发验证
+  expect((await run.settle()).verification).toMatchObject({ reason: 'NO_CHANGES' })
+  const prompt = calls.find(call => call.prompt.includes('<blackboard'))!.prompt
+  expect(prompt).toContain('forma notes')
+  expect(prompt).not.toContain('root notes')
+  expect(prompt).toContain('R4 Blackboard (.board)')
+  const post = run.events.find(e => e.kind === 'workspace')
+  expect(post?.kind === 'workspace' && post.board?.files.find(file => file.file === 'HANDOFF.md')?.content).toBe('forma updated')
+  expect(readFileSync(join(base, 'repo', '.board', 'HANDOFF.md'), 'utf8')).toBe('root notes')
+})
+
 it('VF-30 detects readonly changes outside the board', async () => {
   const run = await launch({ readonly: true })
   await run.settle()

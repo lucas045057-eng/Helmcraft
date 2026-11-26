@@ -2,6 +2,7 @@ import { asc, desc, eq, and, gt, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { TaskRow } from '../../services/store.js'
 import { activeRunStatuses } from '../../services/workers.js'
+import { projectOf } from '@agent-hub/protocol'
 import * as schema from './schema.js'
 
 export function repositories(db: BetterSQLite3Database<typeof schema>) {
@@ -29,12 +30,15 @@ export function repositories(db: BetterSQLite3Database<typeof schema>) {
         .where(and(inArray(taskRuns.status, activeRunStatuses), workerId ? eq(taskRuns.workerId, workerId) : undefined)).all(),
     },
     snapshots: {
-      latestForWorkspace: (workerId: string, workspaceId: string) => {
+      /** 最新的非空黑板快照。project = 项目文件夹（黑板在 <项目>/.board）；null = 工作区根目录的黑板。 */
+      latestForWorkspace: (workerId: string, workspaceId: string, project: string | null = null) => {
         const snapshots = schema.runBoardSnapshots
-        return db.select({ snapshot: snapshots.snapshotJson, capturedAt: snapshots.capturedAt })
-          .from(taskRuns).innerJoin(snapshots, eq(snapshots.runId, taskRuns.id))
+        const rows = db.select({ snapshot: snapshots.snapshotJson, capturedAt: snapshots.capturedAt, subdir: tasks.subdir })
+          .from(taskRuns).innerJoin(snapshots, eq(snapshots.runId, taskRuns.id)).innerJoin(tasks, eq(tasks.id, taskRuns.taskId))
           .where(and(eq(taskRuns.workerId, workerId), eq(taskRuns.workspaceId, workspaceId), gt(snapshots.contentBytes, 0)))
-          .orderBy(desc(snapshots.capturedAt), desc(sql`${snapshots.phase} = 'post'`), desc(taskRuns.id)).limit(1).get()
+          .orderBy(desc(snapshots.capturedAt), desc(sql`${snapshots.phase} = 'post'`), desc(taskRuns.id)).limit(500).all()
+        const hit = rows.find(row => projectOf(row.subdir) === project)
+        return hit && { snapshot: hit.snapshot, capturedAt: hit.capturedAt }
       },
       forRun: (id: string) => db.select().from(schema.runBoardSnapshots).where(eq(schema.runBoardSnapshots.runId, id)).all(),
     },

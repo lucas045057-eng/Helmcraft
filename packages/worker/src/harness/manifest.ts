@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { lstat, open, readdir, readlink, realpath } from 'node:fs/promises'
 import { dirname, join, relative, resolve, sep } from 'node:path'
+import { isBoardPath } from '@agent-hub/protocol'
 import type { ManifestChange, ManifestDiffSummary, ManifestSummary, TamperInfo } from '@agent-hub/protocol'
 import type { Workspace } from '../config/schema.js'
 import { withinWorkspace } from '../security/workspace.js'
@@ -86,7 +87,7 @@ export function diffManifest(pre: Manifest, post: Manifest, sensitive: (path: st
     else continue
     changes[change === 'link' ? 'links' : change]++
     changes.total++
-    changes.boardOnly &&= key.startsWith('.board/')
+    changes.boardOnly &&= isBoardPath(key)
     if (changes.sample.length < 200) changes.sample.push({ path, change })
     if (change === 'link' || sensitive(path)) {
       tamper.total++

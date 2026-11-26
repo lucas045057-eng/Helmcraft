@@ -8,7 +8,7 @@ import { composeRun } from '../harness/compose-run.js'
 import { readBoard, readAgentsMd } from '../harness/board-reader.js'
 import { capturePost, computeApplied, type HarnessSession } from '../harness/session.js'
 import { join } from 'node:path'
-import { mapWorkspaceFile, resolveWorkspaceSubdir, withinWorkspace, workspaceSubdirPath } from '../security/workspace.js'
+import { mapWorkspaceFile, projectBoardRoot, resolveWorkspaceSubdir, withinWorkspace, workspaceSubdirPath } from '../security/workspace.js'
 import { boundLogLine, createRedactor, Lru, NdjsonLineSplitter, ulid } from '@agent-hub/common'
 import type { Clock, SplitLine } from '@agent-hub/common'
 import type { CmdAckPayload, RunCancel, RunDispatch, RunInput, RunResumeState, VerificationSummary } from '@agent-hub/protocol'
@@ -234,6 +234,8 @@ export class RunManager {
     if (stopped()) return
     const session = run.harness
     const workspace = run.command.workspaceId
+    // 黑板与 AGENTS.md 跟着项目走：任务在项目文件夹（Forma、Forma/src）里时用 Forma/.board，否则用工作区根目录
+    const boardRoot = projectBoardRoot(root, run.command.subdir)
     const localHarness = this.config.workspaces.find(ws => ws.id === workspace)!.harness
     const execution = run.command.personal?.execution
     let verificationConfig = localHarness.verify
@@ -313,7 +315,7 @@ export class RunManager {
         session.epochPre = this.writeEpoch.get(workspace) ?? 0
         session.writerActive = [...this.active.values()].some(other => other.command.workspaceId === workspace && other.profile.effectiveProfile !== 'readonly')
         if (session.applied.board !== 'off') {
-          session.pre = await readBoard(root, knownSecrets, this.patterns)
+          session.pre = await readBoard(boardRoot, knownSecrets, this.patterns)
           if (stopped()) return
           if (session.applied.bootstrap && session.pre.dir === 'unsafe') {
             session.applied.bootstrap = false
@@ -326,9 +328,9 @@ export class RunManager {
           if (stopped()) return
         }
         if (session.applied.verify) session.verifyCommandIds = verificationConfig.commands.map(c => c.id)
-        const agents = session.pre?.agentsMd ?? await readAgentsMd(root)
+        const agents = session.pre?.agentsMd ?? await readAgentsMd(boardRoot)
         if (stopped()) return
-        const prompt = composeRun(run.command, session, root, cwd, agents, this.clock.now())
+        const prompt = composeRun(run.command, session, boardRoot, cwd, agents, this.clock.now())
         if (prompt !== undefined) invocation = build(prompt)
       } catch {
         this.finish(run, { kind: 'finished', status: 'failed', errorCode: 'ADAPTER_ERROR', exitCode: null, signal: null, durationMs: 0, summary: 'Harness preparation failed' })
@@ -444,7 +446,7 @@ export class RunManager {
           this.outbox.push(id, { kind: 'log', stream: 'system', text: 'Repair round ' + round + ' ended with ' + (code ?? signal ?? finished.status) })
         }
         const event = await capturePost(session, root, localHarness, knownSecrets, this.patterns, run.profile.effectiveProfile,
-          () => (this.writeEpoch.get(workspace) ?? 0) !== session.epochPre)
+          () => (this.writeEpoch.get(workspace) ?? 0) !== session.epochPre, boardRoot)
         const post = event.board
         this.outbox.push(id, event)
         if (requested && aggregate.status === 'succeeded') {
@@ -482,10 +484,10 @@ export class RunManager {
             const facts = !verificationHeld && nextRepair(summary, results, event.changes, round, session.applied.autoFixMaxRetries, deadline - this.clock.monotonic(), run.command.timeoutMs)
             if (facts && !interrupted()) {
               const resume = probe.adapter?.features.resume && aggregate.cliSessionId && !aggregate.cliSessionId.startsWith('-') ? aggregate.cliSessionId : undefined
-              const repairBoard = !resume && session.applied.board !== 'off' ? await readBoard(root, knownSecrets, this.patterns) : post
-              const agents = repairBoard?.agentsMd ?? await readAgentsMd(root)
+              const repairBoard = !resume && session.applied.board !== 'off' ? await readBoard(boardRoot, knownSecrets, this.patterns) : post
+              const agents = repairBoard?.agentsMd ?? await readAgentsMd(boardRoot)
               if (!interrupted()) {
-                const prompt = composeRun(run.command, session, root, cwd, agents, this.clock.now(), undefined, { facts, resumed: !!resume, ...(repairBoard && { board: repairBoard }) })
+                const prompt = composeRun(run.command, session, boardRoot, cwd, agents, this.clock.now(), undefined, { facts, resumed: !!resume, ...(repairBoard && { board: repairBoard }) })
                 if (!prompt) throw new Error('Could not compose repair prompt')
                 const next = build(prompt, resume ? { resume } : {})
                 session.round++
