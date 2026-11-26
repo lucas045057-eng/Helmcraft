@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from 'react'
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { AuthMeResponse, LoginResponse, TaskDetail } from '@agent-hub/protocol'
 import type { WorkerView } from '@agent-hub/protocol'
@@ -8,7 +8,8 @@ import { Login } from './Login.js'
 import { MissionDrawer } from './MissionDrawer.js'
 import { Pipeline } from './Pipeline.js'
 import { Today } from './Today.js'
-import { ProjectHub, useProjects } from './ProjectHub.js'
+import { defaultWorkspace, ProjectHub, storedWorkspace, useProjects } from './ProjectHub.js'
+import type { Scope } from './ProjectHub.js'
 import { useDashboard } from './store.js'
 import { SystemPage } from './SystemPage.js'
 import { MethodLibrary } from './MethodLibrary.js'
@@ -88,7 +89,15 @@ function Console({ logout }: { logout: () => Promise<void> }) {
   const [history, setHistory] = useState(false)
   const [taskId, setTaskId] = useState<string | undefined>(() => /^\/tasks\/(tsk_[0-9A-HJKMNP-TV-Z]{26})\/?$/.exec(window.location.pathname)?.[1])
   const [createDefaults, setCreateDefaults] = useState<TaskDefaults>()
-  const [workspaceId, setWorkspaceId] = useState('')
+  // 指挥台默认只看一个工作区（记住上次的选择；第一次打开时选有子项目的那个）
+  const [scope, setScope] = useState<Scope>(() => { const stored = storedWorkspace(); return { workspaceId: stored && stored !== '*' ? stored : '', subdir: '' } })
+  const defaulted = useRef(storedWorkspace() !== null)
+  useEffect(() => {
+    if (defaulted.current || !projects.data) return
+    defaulted.current = true
+    const id = defaultWorkspace(projects.data)
+    if (id) setScope({ workspaceId: id, subdir: '' })
+  }, [projects.data])
   const [error, setError] = useState('')
   const workers = useMemo(() => Object.values(workerMap).sort((a, b) => a.displayName.localeCompare(b.displayName)), [workerMap])
   const closeCreate = useCallback(() => setCreateDefaults(undefined), [])
@@ -99,8 +108,9 @@ function Console({ logout }: { logout: () => Promise<void> }) {
     return () => clearInterval(timer)
   }, [])
   return <div className="console" data-testid="command-center">
-    <Header activeProjects={projects.data?.filter(project => project.activeTasks > 0).length}
-      create={() => setCreateDefaults({})} approval={() => { setPage('overview'); setWorkspaceId(''); setHistory(false) }}
+    <Header activeProjects={projects.data?.filter(project => !project.subdir && project.activeTasks > 0).length}
+      create={() => setCreateDefaults(scope.workspaceId ? { defaultWorkspaceId: scope.workspaceId, ...(scope.subdir && { defaultSubdir: scope.subdir }) } : {})}
+      approval={() => { setPage('overview'); setHistory(false) }}
       logout={() => void logout().catch(error => setError(errorText(error)))} />
     {error && <p role="alert" className="error">{error}</p>}
     <nav className="main-tabs" aria-label="指挥台">
@@ -109,13 +119,15 @@ function Console({ logout }: { logout: () => Promise<void> }) {
       <button type="button" aria-current={page === 'system' ? 'page' : undefined} data-testid="system-tab" onClick={() => setPage('system')}>⚙ 系统治理</button>
     </nav>
     <main className="console-body">{page === 'overview' ? <>
-      <ProjectHub query={projects} workers={workers} workspaceId={workspaceId} filter={setWorkspaceId} open={setTaskId}
-        create={project => setCreateDefaults({ defaultWorkspaceId: project.workspaceId, defaultWorkerId: project.workerId, defaultProfile: 'full' })} />
+      <ProjectHub query={projects} workers={workers} scope={scope} setScope={setScope} open={setTaskId}
+        create={project => setCreateDefaults({ defaultWorkspaceId: project.workspaceId, defaultWorkerId: project.workerId, defaultProfile: 'full',
+          ...(project.subdir && { defaultSubdir: project.subdir }) })} />
       {history ? <>
         <button type="button" className="text-button" data-testid="back-to-today" onClick={() => setHistory(false)}>← 返回今日概览</button>
-        <Pipeline live={live} workers={workers} projects={projects.data ?? []} workspaceId={workspaceId} setWorkspace={setWorkspaceId}
+        <Pipeline live={live} workers={workers} projects={projects.data ?? []} workspaceId={scope.workspaceId} subdir={scope.subdir}
+          setWorkspace={workspaceId => setScope({ workspaceId, subdir: '' })}
           now={time + clockOffset} lane={lane} setLane={setLane} open={setTaskId} initialMode="table" />
-      </> : <Today live={live} now={time + clockOffset} workspaceId={workspaceId} open={setTaskId} showHistory={() => setHistory(true)} />}
+      </> : <Today live={live} now={time + clockOffset} workspaceId={scope.workspaceId} subdir={scope.subdir} open={setTaskId} showHistory={() => setHistory(true)} />}
     </> : page === 'methods' ? <MethodLibrary /> : <SystemPage workers={workers} now={time + clockOffset} open={setTaskId} />}</main>
     {createDefaults && <CreateDialog close={closeCreate} workers={workers} {...createDefaults} />}
     {taskId && <MissionDrawer key={taskId} id={taskId} workers={workers} connection={client} close={closeTask} open={setTaskId} />}

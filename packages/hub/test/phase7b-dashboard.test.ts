@@ -32,6 +32,7 @@ it('UX-14 approves verification, follows the live result, and operates both repa
     expect(run.harness?.verify).toEqual({ autoFixMaxRetries: 0 })
     const started = { kind: 'verify', phase: 'started', attempt: 1, commands: ['typecheck'], ts: Date.now(), seq: 2 }
     worker.events(run.runId, task.id, [{ kind: 'started', seq: 1, ts: Date.now(), pid: 1, effectiveProfile: 'edit', adapter: 'mock', commandSummary: 'mock' }, started])
+    await page.getByTestId('tech-details').locator('summary').click()
     const panel = page.getByTestId('verification-panel')
     await pw(panel.getByTestId('verification-badge')).toHaveText('验证中')
     worker.events(run.runId, task.id, [{ ...started, seq: 3, phase: 'result', status: 'failed',

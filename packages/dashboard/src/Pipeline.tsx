@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
-import { TaskListResponse } from '@agent-hub/protocol'
+import { projectOf, TaskListResponse } from '@agent-hub/protocol'
 import type { ProjectOverview, TaskSummary, WorkerView } from '@agent-hub/protocol'
 import { errorText, request, searchParams } from './api.js'
 import { VerificationBadge } from './harness/VerificationPanel.js'
@@ -19,11 +19,11 @@ function TaskCard({ task, now, open }: { task: TaskSummary; now: number; open: (
   </button>
 }
 
-export function Pipeline({ live, workers, now, lane, setLane, open, projects, workspaceId, setWorkspace, initialMode = 'kanban' }: { live: Record<string, TaskSummary>; workers: WorkerView[]; initialMode?: 'kanban' | 'table';
-  projects: ProjectOverview[]; workspaceId: string; setWorkspace(id: string): void;
+export function Pipeline({ live, workers, now, lane, setLane, open, projects, workspaceId, subdir = '', setWorkspace, initialMode = 'kanban' }: { live: Record<string, TaskSummary>; workers: WorkerView[]; initialMode?: 'kanban' | 'table';
+  projects: ProjectOverview[]; workspaceId: string; subdir?: string; setWorkspace(id: string): void;
   now: number; lane: string; setLane: (value: string) => void; open: (id: string) => void }) {
   const [mode, setMode] = useState<'kanban' | 'table'>(initialMode)
-  const workspaces = new Map(projects.map(project => [project.workspaceId, project.label]))
+  const workspaces = new Map(projects.filter(project => !project.subdir).map(project => [project.workspaceId, project.label]))
   const [adapter, setAdapter] = useState('')
   const [keyword, setKeyword] = useState('')
   const statuses = lanes.find(item => item.id === lane)?.statuses
@@ -45,8 +45,8 @@ export function Pipeline({ live, workers, now, lane, setLane, open, projects, wo
       if (!q || previous || task.title.toLocaleLowerCase().includes(q.toLocaleLowerCase())) joined.set(task.id, task)
     }
     return [...joined.values()].filter(task => (!statuses || statuses.includes(task.status)) && (!workspaceId || workspaceId === task.workspaceId) &&
-      (!adapter || adapter === task.adapter)).sort((a, b) => b.taskNo - a.taskNo)
-  }, [query.data, live, q, statuses, workspaceId, adapter])
+      (!subdir || projectOf(task.subdir) === subdir) && (!adapter || adapter === task.adapter)).sort((a, b) => b.taskNo - a.taskNo)
+  }, [query.data, live, q, statuses, workspaceId, subdir, adapter])
   const shownLanes = lane ? lanes.filter(item => item.id === lane) : lanes
   const adapters = [...new Set([...workers.flatMap(worker => worker.adapters.map(item => item.id)), ...filtered.flatMap(t => t.adapter ? [t.adapter] : [])])]
   return <section data-testid="task-pipeline">

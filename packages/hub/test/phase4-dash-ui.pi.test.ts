@@ -202,7 +202,9 @@ it('shows the latest nonempty project board and dispatches and filters tasks fro
     // 项目卡片不再放「换 CLI 接力」，接力只在任务详情的技术详情里
     await pw(center.getByTestId('project-handoff')).toHaveCount(0)
 
-    await center.getByTestId('project-filter-tasks').click()
+    // 没有子项目时默认看全部工作区；用上方的工作区选择切到 forma
+    await pw(center.getByTestId('project-workspace')).toHaveValue('')
+    await center.getByTestId('project-workspace').selectOption('forma')
     await pw(client.getByTestId('task-card-' + daily.taskNo)).toHaveCount(0)
     await pw(client.getByTestId('task-card-' + latest.taskNo)).toBeVisible()
     await client.getByTestId('show-history').click()
@@ -211,7 +213,8 @@ it('shows the latest nonempty project board and dispatches and filters tasks fro
     await filter.selectOption('daily')
     await pw(center.getByTestId('project-board-tabs')).toHaveCount(0)
     await pw(client.getByTestId('task-row-' + daily.taskNo)).toBeVisible()
-    await center.getByTestId('project-filter-tasks').click()
+    await pw(center.getByTestId('project-workspace')).toHaveValue('daily')
+    await center.getByTestId('project-workspace').selectOption('')
     await pw(filter).toHaveValue('')
     await client.getByTestId('back-to-today').click()
     await forma.click()
@@ -223,6 +226,47 @@ it('shows the latest nonempty project board and dispatches and filters tasks fro
     await pw(client.getByTestId('new-task-dialog')).toBeHidden()
     expect(hub.ctx.store.repos.tasks.getByNo(daily.taskNo + 1)).toMatchObject({
       workspaceId: 'forma', profile: 'full', requiredWorkerId: 'project-node', prompt: '项目派单' })
+  } finally { await client.context().close(); await booted.cleanup() }
+}, 60_000)
+
+it('lists the project folders inside a workspace, scopes the console to it and dispatches into a project folder', async () => {
+  const booted = await boot()
+  const { hub } = booted
+  const client = await page(booted.origin)
+  try {
+    const worker = await onlineWorker(hub, 'folder-node', { headers: capabilities, workspaces: [
+      { id: 'soren', label: 'Soren_project', allowedAdapters: ['mock'], maxProfile: 'full', maxConcurrent: 2, isGitRepo: false,
+        projects: [{ dir: 'Forma', isGitRepo: true }] },
+      { id: 'daily', label: 'daily', allowedAdapters: ['mock'], maxProfile: 'full', maxConcurrent: 2, isGitRepo: false, projects: [] }] })
+    // 新建文件夹后，Worker 在下一次心跳带上新的项目列表
+    await worker.heartbeat({ projects: { soren: [{ dir: 'Forma', isGitRepo: true }, { dir: 'Notes', isGitRepo: false }], daily: [] } })
+    const read = await apiToken(hub, ['read'])
+    const listed = async () => expectSchema(api.ProjectOverview.array(), await rest(hub)('GET', '/api/v1/projects', { token: read }))
+    await eventually(async () => (await listed()).some(p => p.subdir === 'Notes'), { timeoutMs: 5000, label: 'Notes listed' })
+    const make = (workspaceId: string, prompt: string, subdir?: string) =>
+      hub.ctx.orchestrator.createTask({ workspaceId, prompt, profile: 'edit', adapter: 'mock', ...(subdir && { subdir }) }, owner)
+    const forma = await make('soren', 'Forma 任务', 'Forma/src')
+    const daily = await make('daily', '日常任务')
+    expect((await listed()).filter(p => p.workspaceId === 'soren').map(p => [p.subdir ?? null, p.totalTasks]))
+      .toEqual(expect.arrayContaining([[null, 1], ['Forma', 1], ['Notes', 0]]))
+
+    await login(client, ADMIN)
+    const center = client.getByTestId('project-hub')
+    await pw(center.getByTestId('project-workspace')).toHaveValue('soren')
+    await pw(center.locator('.project-card')).toHaveCount(2)
+    await pw(client.getByTestId('task-card-' + forma.taskNo)).toBeVisible()
+    await pw(client.getByTestId('task-card-' + daily.taskNo)).toHaveCount(0)
+    await center.getByRole('button', { name: /^Forma/u }).click()
+    await center.getByTestId('project-filter-tasks').click()
+    await pw(client.getByTestId('task-card-' + forma.taskNo)).toBeVisible()
+    await center.getByRole('button', { name: /^Notes/u }).click()
+    await pw(client.getByTestId('task-card-' + forma.taskNo)).toHaveCount(0)
+    await center.getByTestId('project-new-task').click()
+    await pw(client.getByTestId('task-project')).toHaveValue('Notes')
+    await client.getByTestId('task-prompt').fill('写笔记')
+    await client.getByTestId('task-create-submit').click()
+    await pw(client.getByTestId('new-task-dialog')).toBeHidden()
+    expect(hub.ctx.store.repos.tasks.getByNo(daily.taskNo + 1)).toMatchObject({ workspaceId: 'soren', subdir: 'Notes', prompt: '写笔记' })
   } finally { await client.context().close(); await booted.cleanup() }
 }, 60_000)
 

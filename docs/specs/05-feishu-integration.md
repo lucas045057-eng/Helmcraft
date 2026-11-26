@@ -108,6 +108,7 @@ flowchart TD
 | 字段 | 来源 |
 | :--- | :--- |
 | `workspaceId` | 指令 `--ws` > 会话绑定（`feishu.chatDefaults[chatId].workspaceId`）> `feishu.defaultWorkspaceId`；均无 → 回复“请指定工作区”并列出可用工作区 |
+| `subdir`（项目文件夹） | 指令 `--dir` > 会话绑定 `chatDefaults[chatId].subdir`（仅在未用 `--ws` 换工作区时沿用）> 无（工作区根目录）。项目 = 工作区根目录下的一级子文件夹，由 Worker 扫描上报 |
 | `adapter` | 指令 `--cli` > 会话绑定 > 全局默认顺序 |
 | `profile` | 指令 `--profile`（仅 Owner）> 会话绑定 > Requester 默认 `edit`（受策略 H1 上限约束，默认需 Owner 审批）、Owner 默认 `edit` |
 | `title` | 文本前 80 字符 |
@@ -135,7 +136,7 @@ taskRef   = "#" digits | digits | "tsk_" ulid ;
 
 | 指令 | 角色 | 说明 |
 | :--- | :--- | :--- |
-| `/run [--cli=<adapter>] [--ws=<workspace>] [--worker=<id>] [--profile=readonly\|edit\|full] [--priority=<n>] <需求>` | Owner/Requester（`--worker`、`--profile=full`、`--priority` 仅 Owner） | 显式建任务 |
+| `/run [--cli=<adapter>] [--ws=<workspace>] [--dir=<项目文件夹>] [--worker=<id>] [--profile=readonly\|edit\|full] [--priority=<n>] <需求>` | Owner/Requester（`--worker`、`--profile=full`、`--priority` 仅 Owner） | 显式建任务 |
 | `/status [taskRef]` | 两者 | 无参数：本人活动任务列表（Owner：全部活动任务前 10）；有参数：任务状态卡片 |
 | `/tasks [mine\|all] [--status=...]` | Owner（Requester 只能 `mine`） | 最近 10 个任务 |
 | `/workers` | Owner | Worker 列表卡片（在线、槽位、adapter 徽章） |

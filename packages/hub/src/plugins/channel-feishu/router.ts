@@ -101,7 +101,9 @@ export class MessageRouter {
       const workspaceId = flags.ws ?? defaults?.workspaceId ?? config.defaultWorkspaceId
       if (!workspaceId) return '请指定工作区。可用工作区：' + [...new Set(api.listWorkers().flatMap(w => w.workspaces.map(ws => ws.id)))].join('、')
       const adapter = flags.cli ?? defaults?.adapter
-      return { prompt, origin, workspaceId, profile: flags.profile ?? defaults?.profile ?? config.defaultProfile ?? 'edit',
+      // 项目文件夹：--dir 优先；只有沿用群默认工作区时才沿用群默认项目
+      const subdir = flags.dir ?? (flags.ws ? undefined : defaults?.subdir)
+      return { prompt, origin, workspaceId, ...(subdir && { subdir }), profile: flags.profile ?? defaults?.profile ?? config.defaultProfile ?? 'edit',
         ...(adapter && { adapter }), ...(flags.worker && { requiredWorkerId: flags.worker }),
         ...(flags.priority !== undefined && { priority: flags.priority }) }
     }

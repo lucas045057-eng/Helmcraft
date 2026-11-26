@@ -1,9 +1,10 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { TaskListResponse } from '@agent-hub/protocol'
+import { projectOf, TaskListResponse } from '@agent-hub/protocol'
 import type { TaskStatus, TaskSummary } from '@agent-hub/protocol'
 import { errorText, request, searchParams } from './api.js'
 import { duration, sourceLabels, statusLabels } from './format.js'
+import { VerificationBadge } from './harness/VerificationPanel.js'
 
 // 首页只回答三件事：要我处理什么、在跑什么、最近做完了什么。完整历史在「查看全部历史」里。
 export const RECENT_WINDOW_MS = 24 * 3600_000
@@ -41,9 +42,11 @@ function Row({ task, now, open, rounds }: { task: TaskSummary; now: number; open
     : task.resultDeliveryStatus === 'pending_review' ? '结果等你审核后发出' : task.lastProgress ?? task.scheduleHint
   return <button type="button" className={'today-row' + (failed ? ' failed' : '')} onClick={open} data-testid={'task-card-' + task.taskNo} data-status={task.status}>
     <span className="today-title"><strong>#{task.taskNo}</strong> {task.title}</span>
+    {projectOf(task.subdir) && <span className="pill project-pill">{projectOf(task.subdir)}</span>}
     <span className="today-meta">
       <span className={'pill status-' + task.status}>{statusLabels[task.status]}</span>
       {rounds && rounds > 1 && <span className="pill">共 {rounds} 轮</span>}
+      {task.verification && task.verification !== 'skipped' && task.verification !== 'pending' && <VerificationBadge state={task.verification} />}
       <span className="muted">{task.adapter ?? '自动选择 CLI'} · {sourceLabels[task.origin.source]}</span>
       <span className="muted">{task.finishedAt ? ago(now, task.finishedAt) : task.startedAt ? '已运行 ' + duration(now - task.startedAt) : ago(now, task.createdAt)}</span>
     </span>
@@ -51,10 +54,11 @@ function Row({ task, now, open, rounds }: { task: TaskSummary; now: number; open
   </button>
 }
 
-export function Today({ live, now, workspaceId, open, showHistory }: { live: Record<string, TaskSummary>; now: number; workspaceId: string;
-  open(id: string): void; showHistory(): void }) {
-  const query = useQuery({ queryKey: ['task-history', 'today', workspaceId], refetchInterval: 15_000,
-    queryFn: ({ signal }) => request('/tasks' + searchParams({ workspaceId, limit: '100' }), TaskListResponse, { signal }) })
+export function Today({ live, now, workspaceId, subdir = '', open, showHistory }: { live: Record<string, TaskSummary>; now: number; workspaceId: string;
+  subdir?: string; open(id: string): void; showHistory(): void }) {
+  // 「要你处理」不分工作区（别的工作区等你批准也要看到）；进行中 / 最近完成只看当前范围
+  const query = useQuery({ queryKey: ['task-history', 'today'], refetchInterval: 15_000,
+    queryFn: ({ signal }) => request('/tasks' + searchParams({ limit: '200' }), TaskListResponse, { signal }) })
   const tasks = useMemo(() => {
     const joined = new Map<string, TaskSummary>()
     for (const item of query.data?.items ?? []) joined.set(item.id, item)
@@ -62,11 +66,13 @@ export function Today({ live, now, workspaceId, open, showHistory }: { live: Rec
       const previous = joined.get(task.id)
       if (!previous || previous.version <= task.version) joined.set(task.id, task)
     }
-    return [...joined.values()].filter(task => !workspaceId || task.workspaceId === workspaceId).sort((a, b) => b.taskNo - a.taskNo)
-  }, [query.data, live, workspaceId])
+    return [...joined.values()].sort((a, b) => b.taskNo - a.taskNo)
+  }, [query.data, live])
+  const scoped = tasks.filter(task => (!workspaceId || task.workspaceId === workspaceId) && (!subdir || projectOf(task.subdir) === subdir))
   const mine = tasks.filter(needsMe)
-  const active = tasks.filter(task => running.includes(task.status) && !needsMe(task))
-  const recent = recentChains(tasks, now)
+  const active = scoped.filter(task => running.includes(task.status) && !needsMe(task))
+  // 已在「要你处理」里的（如结果待审核）不在最近完成里重复出现
+  const recent = recentChains(scoped.filter(task => !needsMe(task)), now)
   return <section className="today" data-testid="today">
     {query.error && <p className="error" role="alert">{errorText(query.error)}</p>}
     {mine.length > 0 && <div className="today-group attention" data-testid="today-attention"><h2>要你处理 <span className="pill">{mine.length}</span></h2>

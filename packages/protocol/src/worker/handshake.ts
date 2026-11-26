@@ -21,6 +21,9 @@ export const AdapterCapability = z.strictObject({
   error: z.string().max(512).optional(),
 })
 
+// 工作区根目录下的一级子文件夹 = 一个项目（不含点目录与 node_modules）；任务以 subdir 指向它
+export const ProjectDir = /^[^\\/:*?"<>|\s.][^\\/:*?"<>|]{0,127}$/u
+export const ProjectDecl = z.strictObject({ dir: z.string().regex(ProjectDir), isGitRepo: z.boolean() })
 export const WorkspaceDecl = z.strictObject({
   id: WorkspaceId,
   label: z.string().max(128),
@@ -29,6 +32,7 @@ export const WorkspaceDecl = z.strictObject({
   maxProfile: Profile,
   maxConcurrent: z.number().int().min(1).max(16),
   isGitRepo: z.boolean(),
+  projects: z.array(ProjectDecl).max(64).optional(),
 })
 
 export const RunResumeState = z.strictObject({
@@ -94,6 +98,7 @@ export const HubReject = z.strictObject({
 export type HubChallenge = z.infer<typeof HubChallenge>
 export type AdapterCapability = z.infer<typeof AdapterCapability>
 export type WorkspaceDecl = z.infer<typeof WorkspaceDecl>
+export type ProjectDecl = z.infer<typeof ProjectDecl>
 export type RunResumeState = z.infer<typeof RunResumeState>
 export type WorkerHello = z.infer<typeof WorkerHello>
 export type ResumeDirective = z.infer<typeof ResumeDirective>

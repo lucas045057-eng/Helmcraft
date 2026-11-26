@@ -7,7 +7,7 @@ import type { Clock } from '@agent-hub/common'
 import { FrameId, HubToWorkerFrame, MIN_WORKER_WINDOW_BYTES, WORKER_SUBPROTOCOL } from '@agent-hub/protocol'
 import type { HubChallenge, HubWelcome, WorkerHeartbeat, WorkerHello, WorkerToHubFrame } from '@agent-hub/protocol'
 import type { WorkerConfig } from '../config/schema.js'
-import { workspaceDeclarations } from '../config/load.js'
+import { workspaceDeclarations, workspaceProjects } from '../config/load.js'
 import type { WorkerIdentity } from '../identity.js'
 import type { RunManager } from '../runner/run-manager.js'
 import type { AdapterRegistry } from '../adapters/registry.js'
@@ -37,6 +37,7 @@ export class WorkerTunnel {
   private heartbeatMs = 10_000
   private heartbeatTimeoutMs = 30_000
   private lastHubBootId: string | undefined
+  private sentProjects = ''
   private readonly offset = new ClockOffset()
   private readonly commands: Commands
   private stopTick?: () => void
@@ -148,9 +149,11 @@ export class WorkerTunnel {
     const signed = Buffer.from(['agent-hub/worker-auth/v1', this.config.workerId, challenge.nonce, clientNonce, challenge.hubBootId].join('\n'))
     const agent: WorkerHello['agent'] = { version: '0.1.0', hostname: hostname(), os: process.platform as WorkerHello['agent']['os'],
       arch: process.arch, nodeVersion: process.version, pid: process.pid }
+    const workspaces = workspaceDeclarations(this.config)
+    this.sentProjects = JSON.stringify(Object.fromEntries(workspaces.map(ws => [ws.id, ws.projects])))
     this.send({ type: 'worker.hello', payload: { auth: { workerId: this.config.workerId, clientNonce, keyFingerprint: this.identity.fingerprint,
       signature: sign(null, signed, this.identity.privateKey).toString('base64url') }, agent, maxConcurrency: this.config.maxConcurrency,
-      adapters: this.adapters.capabilities(), workspaces: workspaceDeclarations(this.config), runs: this.runs.report(),
+      adapters: this.adapters.capabilities(), workspaces, runs: this.runs.report(),
       drain: this.runs.localDrain, ...(this.lastHubBootId && { lastHubBootId: this.lastHubBootId }),
     } })
     this.lastHubBootId = challenge.hubBootId
@@ -183,10 +186,13 @@ export class WorkerTunnel {
     if (!this.welcomed) return
     this.lastHeartbeat = this.clock.monotonic()
     const adapters: WorkerHeartbeat['adapters'] = Object.fromEntries(this.adapters.capabilities().map(item => [item.id, item.status]))
+    // 新建/删除项目文件夹后，下一次心跳把新的项目列表带给 Hub
+    const projects = workspaceProjects(this.config), scanned = JSON.stringify(projects), changed = scanned !== this.sentProjects
+    this.sentProjects = scanned
     this.send({ type: 'worker.heartbeat', payload: { activeRuns: this.runs.report().filter(run => run.state !== 'finished')
       .map(({ runId, state, lastSeq }) => ({ runId, state, lastSeq })), slotsUsed: this.runs.slotsUsed,
     load: { memFreeMb: Math.floor(freemem() / 1048576), memTotalMb: Math.floor(totalmem() / 1048576) },
-    bufferedBytes: this.runs.outbox.bufferedBytes, droppedLogBytesTotal: this.runs.outbox.droppedLogBytesTotal, adapters } })
+    bufferedBytes: this.runs.outbox.bufferedBytes, droppedLogBytesTotal: this.runs.outbox.droppedLogBytesTotal, adapters, ...(changed && { projects }) } })
   }
   private send(frame: Payload<WorkerToHubFrame>) {
     if (this.ws?.readyState !== WebSocket.OPEN) return false

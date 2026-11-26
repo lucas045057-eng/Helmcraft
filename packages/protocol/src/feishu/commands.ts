@@ -1,10 +1,11 @@
 import { AdapterId, Profile, RunId, TaskRef, WorkerId, WorkspaceId } from '../common.js'
 import { TaskStatus } from '../task.js'
+import { ProjectDir } from '../worker/handshake.js'
 
 // packages/protocol/src/feishu/commands.ts
 export type ParsedCommand =
   | { name: 'handoff'; flags: { cli: AdapterId; from?: string }; prompt: string }
-  | { name: 'run'; flags: { from?: string; cli?: AdapterId; ws?: string; worker?: string; profile?: Profile; priority?: number }; prompt: string }
+  | { name: 'run'; flags: { from?: string; cli?: AdapterId; ws?: string; dir?: string; worker?: string; profile?: Profile; priority?: number }; prompt: string }
   | { name: 'status'; taskRef?: TaskRef } | { name: 'tasks'; scope: 'mine' | 'all'; status?: TaskStatus[] }
   | { name: 'workers' } | { name: 'cancel' | 'retry' | 'approve' | 'fix' | 'accept'; taskRef: TaskRef }
   | { name: 'reject'; taskRef: TaskRef; reason?: string } | { name: 'drain'; workerId: string; on: boolean }
@@ -12,7 +13,7 @@ export type ParsedCommand =
 
 const usage = {
   handoff: '/handoff --cli <adapter> [--from <taskRef>] [需求]',
-  run: '/run [--cli <adapter>] [--ws <workspace>] [--worker <id>] [--profile <profile>] [--priority <n>] <需求>',
+  run: '/run [--cli <adapter>] [--ws <workspace>] [--dir <项目文件夹>] [--worker <id>] [--profile <profile>] [--priority <n>] <需求>',
   status: '/status [taskRef]',
   tasks: '/tasks [mine|all] [--status=<status,...>]',
   workers: '/workers',
@@ -105,7 +106,7 @@ function parseRun(scanner: Scanner, name: 'run' | 'handoff'): ParsedCommand {
     if (seen.has(key)) throw new Error('选项重复')
     seen.add(key)
     if (name === 'handoff' && key !== '--cli' && key !== '--from') throw new Error('未知选项')
-    if (!['--cli', '--from', '--ws', '--worker', '--profile', '--priority'].includes(key)) throw new Error('未知选项')
+    if (!['--cli', '--from', '--ws', '--dir', '--worker', '--profile', '--priority'].includes(key)) throw new Error('未知选项')
     const value = scanner.flagValue()
     switch (key) {
       case '--cli': {
@@ -121,6 +122,10 @@ function parseRun(scanner: Scanner, name: 'run' | 'handoff'): ParsedCommand {
       case '--ws':
         if (!WorkspaceId.safeParse(value).success) throw new Error('无效工作区')
         flags.ws = value
+        break
+      case '--dir':
+        if (!ProjectDir.test(value)) throw new Error('无效项目文件夹')
+        flags.dir = value
         break
       case '--worker':
         if (!WorkerId.safeParse(value).success) throw new Error('无效 Worker')

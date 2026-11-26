@@ -8,10 +8,13 @@ export interface TaskDefaults {
   defaultWorkerId?: string
   defaultWorkspaceId?: string
   defaultProfile?: Profile
+  defaultSubdir?: string
 }
 
-export function TaskFields({ workers, task, defaultWorkerId, defaultWorkspaceId, defaultProfile }: TaskDefaults & { workers: WorkerView[]; task?: TaskDetail }) {
+export function TaskFields({ workers, task, defaultWorkerId, defaultWorkspaceId, defaultProfile, defaultSubdir }: TaskDefaults & { workers: WorkerView[]; task?: TaskDetail }) {
   const [workerId, setWorkerId] = useState(defaultWorkerId ?? '')
+  const [workspaceId, setWorkspaceId] = useState(task?.workspaceId ?? defaultWorkspaceId ?? '')
+  const [subdir, setSubdir] = useState(task?.subdir ?? defaultSubdir ?? '')
   const [methodId, setMethodId] = useState('')
   const [suggested, setSuggested] = useState<{ id: string; name: string } | null>(null)
   const methods = useQuery({ queryKey: ['methods'], enabled: !task, queryFn: ({ signal }) => request('/methods', MethodListResponse, { signal }) })
@@ -23,6 +26,9 @@ export function TaskFields({ workers, task, defaultWorkerId, defaultWorkspaceId,
   const candidates = workers.filter(worker => worker.status === 'active' && (!workerId || worker.id === workerId))
   const workspaces = new Map(candidates.flatMap(worker => worker.workspaces.map(workspace => [workspace.id, workspace.label] as const)))
   if (task && !workspaces.has(task.workspaceId)) workspaces.set(task.workspaceId, task.workspaceId)
+  // 工作区里的一级子文件夹 = 项目；选了项目，任务就在那个文件夹里运行
+  const projects = [...new Set(candidates.flatMap(worker => worker.workspaces.filter(ws => ws.id === workspaceId).flatMap(ws => ws.projects ?? []).map(p => p.dir)))]
+  if (subdir && !projects.includes(subdir)) projects.push(subdir)
   const adapters = [...new Set(candidates.flatMap(worker => worker.adapters.map(adapter => adapter.id)))]
   if (task?.adapter && !adapters.includes(task.adapter as AdapterId)) adapters.push(task.adapter as AdapterId)
   return <div className="task-fields">
@@ -30,9 +36,14 @@ export function TaskFields({ workers, task, defaultWorkerId, defaultWorkspaceId,
       <option value="">{task ? '保持原设置' : '自动调度'}</option>
       {workers.filter(worker => worker.status === 'active').map(worker => <option key={worker.id} value={worker.id}>{worker.displayName} · {worker.id}</option>)}
     </select></label>
-    <label>工作区<select name="workspaceId" data-testid="task-workspace" defaultValue={task?.workspaceId ?? defaultWorkspaceId ?? ''} required>
+    <label>工作区<select name="workspaceId" data-testid="task-workspace" value={workspaceId} required
+      onChange={event => { setWorkspaceId(event.target.value); setSubdir('') }}>
       <option value="" disabled>选择工作区</option>
       {[...workspaces].map(([id, label]) => <option key={id} value={id}>{label || id}</option>)}
+    </select></label>
+    <label>项目<select name="subdir" data-testid="task-project" value={subdir} onChange={event => setSubdir(event.target.value)}>
+      <option value="">整个工作区（根目录）</option>
+      {projects.map(dir => <option key={dir} value={dir}>{dir}</option>)}
     </select></label>
     <label>CLI<select name="adapter" data-testid="task-adapter" defaultValue={task?.adapter ?? ''}>
       <option value="">{task ? '保持原设置' : '自动选择'}</option>
@@ -57,11 +68,12 @@ export function readTaskFields(form: HTMLFormElement, task?: TaskDetail) {
   const input = new FormData(form)
   const value = (key: string) => String(input.get(key) ?? '')
   const adapter = value('adapter'), worker = value('requiredWorkerId'), methodId = value('methodId')
-  const prompt = value('prompt'), profile = Profile.parse(value('profile')), workspaceId = value('workspaceId')
-  const fields = { prompt, profile, workspaceId, ...(adapter && { adapter: AdapterId.parse(adapter) }), ...(worker && { requiredWorkerId: worker }), ...(!task && methodId && { methodId }) }
+  const prompt = value('prompt'), profile = Profile.parse(value('profile')), workspaceId = value('workspaceId'), subdir = value('subdir')
+  const fields = { prompt, profile, workspaceId, ...(subdir && { subdir }), ...(adapter && { adapter: AdapterId.parse(adapter) }), ...(worker && { requiredWorkerId: worker }), ...(!task && methodId && { methodId }) }
   const overrides: ApprovalOverrides = {
     ...(prompt !== task?.prompt && { prompt }), ...(profile !== task?.profile && { profile }),
     ...(workspaceId !== task?.workspaceId && { workspaceId }),
+    ...(subdir && subdir !== (task?.subdir ?? '') && { subdir }),
     ...(fields.adapter && fields.adapter !== task?.adapter && { adapter: fields.adapter }),
     ...(fields.requiredWorkerId && { requiredWorkerId: fields.requiredWorkerId }),
   }

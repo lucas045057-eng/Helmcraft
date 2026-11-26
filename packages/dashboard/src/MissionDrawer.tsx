@@ -127,6 +127,7 @@ export function MissionDrawer({ id, workers, connection, close, open }: { id: st
         <h2>{task?.title ?? '任务详情'}</h2></div><button type="button" onClick={close} aria-label="关闭" data-testid="drawer-close">×</button></header>
       {history.error && <p role="alert" className="error">{errorText(history.error)}</p>}
       {task && <div className="drawer-body">
+        {task.subdir && <p className="pill method-used" data-testid="task-project-used">项目：{task.subdir}</p>}
         {task.method && <p className="pill method-used" data-testid="task-method-used">使用方法：{task.method.name} · r{task.method.revision}{task.method.via === 'suggested' ? '（推荐后确认）' : ''}</p>}
         {task.resultSummary ? <section className="drawer-result" data-testid="drawer-result"><h3>结果</h3><pre>{task.resultSummary}</pre></section>
           : summary?.lastProgress || task.lastProgress ? <p className="drawer-progress">当前进展：{summary?.lastProgress ?? task.lastProgress}</p> : null}

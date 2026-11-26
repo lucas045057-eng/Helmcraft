@@ -30,6 +30,7 @@ export const WorkspacePointerView = z.strictObject({
 })
 export const ProjectOverview = z.strictObject({
   workerId: WorkerId, workspaceId: WorkspaceId, label: z.string(), isGitRepo: z.boolean(),
+  subdir: z.string().nullable().optional(),                // 非空 = 工作区内的子项目（统计只算该子目录的任务）
   workerOnline: z.boolean(), maxProfile: Profile, allowedAdapters: z.array(AdapterId),
   activeTasks: z.number().int().nonnegative(), totalTasks: z.number().int().nonnegative(),
   succeededTasks: z.number().int().nonnegative(), failedTasks: z.number().int().nonnegative(),
@@ -38,6 +39,8 @@ export const ProjectOverview = z.strictObject({
   pointer: WorkspacePointerView.nullable(), board: BoardSnapshot.nullable(), boardCapturedAt: z.number().int().nullable(),
 })
 export type ProjectOverview = z.infer<typeof ProjectOverview>
+/** 任务 subdir 归属的项目：'Forma'、'./Forma/'、'Forma/src' 都归到 Forma；空或 '.' 是工作区根目录（null）。 */
+export const projectOf = (subdir: string | null | undefined) => subdir?.split(/[\\/]/u).find(part => part && part !== '.') ?? null
 export const RunHarnessView = z.strictObject({
   runId: RunId,
   directive: HarnessDirectiveCore.omit({ facts: true }).nullable(),   // 不能对带 refine 的 HarnessDirective 调用 .omit()

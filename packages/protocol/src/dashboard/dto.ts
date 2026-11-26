@@ -26,6 +26,7 @@ export const TaskSummary = z.strictObject({
   priority: z.number().int(),
   requester: ActorView, origin: TaskOrigin,
   adapter: z.string().nullable(), workspaceId: z.string(), profile: z.enum(['readonly', 'edit', 'full']),
+  subdir: z.string().nullable().optional(),  // 工作区内的项目子目录；null = 工作区根
   workerId: z.string().nullable(),           // 当前/最后一次 Run 的 Worker
   attempt: z.number().int(), maxAttempts: z.number().int(),
   parentTaskId: z.string().nullable(),

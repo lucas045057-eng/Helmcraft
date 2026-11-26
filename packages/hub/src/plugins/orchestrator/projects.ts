@@ -1,3 +1,4 @@
+import { projectOf } from '@agent-hub/protocol'
 import type { BoardSnapshot, ProjectOverview, WorkerView } from '@agent-hub/protocol'
 import type { Repos } from '../../services/store.js'
 import { pointerView } from './pointers.js'
@@ -16,13 +17,13 @@ export function listProjects(db: Repos, workers: WorkerView[]): ProjectOverview[
   // A queued task with automatic scheduling belongs to a node only when its workspace is unambiguous.
   const uniqueOwners = new Map<string, string | null>()
   for (const { worker, ws } of workspaces) uniqueOwners.set(ws.id, uniqueOwners.has(ws.id) ? null : worker.id)
-  const activity = db.prepare(`
+  const sql = (partition: string) => `
     WITH owners AS (SELECT key, value FROM json_each(?)),
     attributed AS (
       SELECT coalesce(r.worker_id, t.required_worker_id, owners.value) AS workerId,
         coalesce(r.workspace_id, t.workspace_id) AS workspaceId, t.id AS latestTaskId, t.task_no AS latestTaskNo,
         r.id AS latestRunId, coalesce(r.adapter, t.adapter) AS latestAdapter, r.verification_status AS latestVerification,
-        t.status, t.updated_at AS lastActiveAt
+        t.status, t.updated_at AS lastActiveAt, t.subdir AS subdir
       FROM tasks t
       LEFT JOIN task_runs r ON r.id = (SELECT id FROM task_runs WHERE task_id = t.id ORDER BY run_seq DESC LIMIT 1)
       LEFT JOIN owners ON owners.key = t.workspace_id
@@ -32,12 +33,26 @@ export function listProjects(db: Repos, workers: WorkerView[]): ProjectOverview[
         sum(status = 'succeeded') OVER project AS succeededTasks,
         sum(status IN ('failed', 'timed_out')) OVER project AS failedTasks,
         row_number() OVER (project ORDER BY lastActiveAt DESC, latestTaskNo DESC) AS position
-      FROM attributed WINDOW project AS (PARTITION BY workerId, workspaceId)
+      FROM attributed WINDOW project AS (PARTITION BY ${partition})
     )
-    SELECT workerId, workspaceId, latestTaskId, latestTaskNo, latestRunId, latestAdapter, latestVerification,
+    SELECT workerId, workspaceId, subdir, latestTaskId, latestTaskNo, latestRunId, latestAdapter, latestVerification,
       lastActiveAt, totalTasks, activeTasks, succeededTasks, failedTasks FROM ranked WHERE position = 1
-  `).all(JSON.stringify(Object.fromEntries(uniqueOwners))) as Activity[]
+  `
+  const owners = JSON.stringify(Object.fromEntries(uniqueOwners))
+  const strip = (row: Activity & { subdir: string | null }): Activity => { const { subdir, ...rest } = row; void subdir; return rest }
+  const activity = (db.prepare(sql('workerId, workspaceId')).all(owners) as (Activity & { subdir: string | null })[]).map(strip)
   const stats = new Map(activity.map(row => [key(row.workerId, row.workspaceId), row]))
+  // 子项目：同一项目的多种 subdir 写法（Forma、Forma/src）合并计数，"最近一次"取最新的那组
+  const subStats = new Map<string, Activity>()
+  for (const row of db.prepare(sql('workerId, workspaceId, subdir')).all(owners) as (Activity & { subdir: string | null })[]) {
+    const project = projectOf(row.subdir)
+    if (!project) continue
+    const id = key(row.workerId, row.workspaceId) + '/' + project, seen = subStats.get(id), next = strip(row)
+    if (!seen) { subStats.set(id, next); continue }
+    const newer = (next.lastActiveAt ?? 0) > (seen.lastActiveAt ?? 0) ? next : seen
+    subStats.set(id, { ...newer, totalTasks: seen.totalTasks + next.totalTasks, activeTasks: seen.activeTasks + next.activeTasks,
+      succeededTasks: seen.succeededTasks + next.succeededTasks, failedTasks: seen.failedTasks + next.failedTasks })
+  }
   const projects: ProjectOverview[] = []
   for (const id of pairs) {
     const entry = declared.get(id)
@@ -53,6 +68,14 @@ export function listProjects(db: Repos, workers: WorkerView[]): ProjectOverview[
       activeTasks: 0, totalTasks: 0, succeededTasks: 0, failedTasks: 0, lastActiveAt: null,
       latestTaskId: null, latestTaskNo: null, latestAdapter: null, latestRunId: null, latestVerification: null,
       ...stats.get(id),
+    })
+    for (const sub of entry?.ws.projects ?? []) projects.push({
+      workerId, workspaceId, subdir: sub.dir, label: sub.dir, isGitRepo: sub.isGitRepo,
+      maxProfile: entry!.ws.maxProfile, allowedAdapters: entry!.ws.allowedAdapters,
+      workerOnline: nodes.get(workerId)?.connection === 'online', pointer: null, board: null, boardCapturedAt: null,
+      activeTasks: 0, totalTasks: 0, succeededTasks: 0, failedTasks: 0, lastActiveAt: null,
+      latestTaskId: null, latestTaskNo: null, latestAdapter: null, latestRunId: null, latestVerification: null,
+      ...subStats.get(id + '/' + sub.dir),
     })
   }
   return projects.sort((a, b) => Number(!!b.board) - Number(!!a.board) ||

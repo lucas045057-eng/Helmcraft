@@ -29,6 +29,7 @@ it('F11 accepts a successful write without a harness summary through the drawer'
     await page.goto(origin + '/tasks/' + task.id)
     await page.getByTestId('login-token').fill(ADMIN_TOKEN)
     await page.getByTestId('login-submit').click()
+    await page.getByTestId('tech-details').locator('summary').click()
     const button = page.getByTestId('pointer-accept')
     await pw(button).toBeVisible()
     page.once('dialog', dialog => dialog.accept())

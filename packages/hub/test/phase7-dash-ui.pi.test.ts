@@ -43,6 +43,7 @@ it('opens real snapshots and diffs, accepts a Requester run, previews and submit
     await page.goto(origin + '/tasks/' + task.id)
     await page.getByTestId('login-token').fill(ADMIN_TOKEN)
     await page.getByTestId('login-submit').click()
+    await page.getByTestId('tech-details').locator('summary').click()
     const board = page.getByTestId('board-panel')
     await pw(board).toContainText('after UI edit')
     await board.getByRole('button', { name: 'DIFF', exact: true }).click()

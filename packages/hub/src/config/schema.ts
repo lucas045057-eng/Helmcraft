@@ -60,6 +60,7 @@ export const HubConfigSchema = z.strictObject({
     allowGroupCommands: z.boolean().default(false), defaultProfile: Profile.optional(),
     defaultWorkspaceId: WorkspaceId.optional(), methodSuggestions: z.boolean().default(true), chatDefaults: z.record(z.string(), z.strictObject({
       workspaceId: WorkspaceId.optional(), adapter: AdapterId.optional(), profile: Profile.optional(),
+      subdir: z.string().max(128).optional(),            // 本群默认进入的项目文件夹（工作区内一级子目录）
     })).default({}), staleMessageMs: ms(600_000),
     card: z.strictObject({ minPatchIntervalMs: ms(3000), minPatchIntervalHighMs: ms(1000), globalPatchQps: ms(5),
       cardMaxBytes: z.number().int().min(512).max(30 * 1024).default(28 * 1024), cardResultMaxChars: ms(2000) }).prefault({}),

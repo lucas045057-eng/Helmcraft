@@ -46,7 +46,7 @@ export function taskView(db: Repos, task: TaskRow, worker: WorkerView | undefine
   return { ...(latest?.verificationStatus && { verification: latest.verificationStatus }), id: task.id, taskNo: task.taskNo, version: task.version, title: task.title, status: task.status,
     priority: task.priority, requester: { ...state.requester, ...(task.requesterName && { name: task.requesterName }) },
     origin: task.originJson as TaskOrigin, adapter: task.adapter ?? latest?.adapter ?? null,
-    workspaceId: task.workspaceId, profile: task.profile, workerId: latest?.workerId ?? null, attempt: task.attemptCount,
+    workspaceId: task.workspaceId, subdir: task.subdir, profile: task.profile, workerId: latest?.workerId ?? null, attempt: task.attemptCount,
     maxAttempts: task.maxAttempts, parentTaskId: task.parentTaskId, lastProgress: task.lastProgress, scheduleHint: task.scheduleHint,
     workerConnection: worker?.connection ?? null, graceUntil: task.currentRunId ? worker?.graceUntil ?? null : null,
     errorCode: task.errorCode, resultDeliveryStatus: task.resultDeliveryStatus, createdAt: task.createdAt, updatedAt: task.updatedAt,

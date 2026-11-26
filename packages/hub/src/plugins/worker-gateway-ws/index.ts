@@ -289,7 +289,9 @@ export class WorkerGatewayWs extends Service implements WorkerGateway {
         const adapters = (row.capabilitiesJson as WorkerView['adapters'] | null ?? []).map(adapter => ({
           ...adapter, status: frame.payload.adapters[adapter.id] ?? adapter.status,
         }))
-        this.update(conn.workerId, { lastSeenAt: conn.lastFrame, connection: 'online', capabilitiesJson: adapters })
+        const projects = frame.payload.projects
+        const workspaces = projects && (row.workspacesJson as WorkerView['workspaces'] | null ?? []).map(ws => ({ ...ws, projects: projects[ws.id] ?? [] }))
+        this.update(conn.workerId, { lastSeenAt: conn.lastFrame, connection: 'online', capabilitiesJson: adapters, ...(workspaces && { workspacesJson: workspaces }) })
         this.emitFrame(conn, { type: 'hub.heartbeat_ack', payload: { serverTime: this.ctx.clock.now() } })
         break
       }

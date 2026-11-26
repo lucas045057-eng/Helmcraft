@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { AdapterId, RunId } from '../common.js'
-import { RunResumeState } from './handshake.js'
+import { ProjectDecl, RunResumeState } from './handshake.js'
 export const WorkerHeartbeat = z.strictObject({
   activeRuns: z.array(z.strictObject({
     runId: RunId,
@@ -17,6 +17,7 @@ export const WorkerHeartbeat = z.strictObject({
   adapters: z.partialRecord(AdapterId, z.enum(['ready', 'missing', 'error'])),
   bufferedBytes: z.number().int(),          // 未确认事件缓冲总字节
   droppedLogBytesTotal: z.number().int(),   // 自启动以来因背压丢弃的日志字节
+  projects: z.record(z.string(), z.array(ProjectDecl).max(64)).optional(), // 项目列表变化时才带：workspaceId → 子项目
 })
 export const HubHeartbeatAck = z.strictObject({ serverTime: z.number().int() })
 

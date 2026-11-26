@@ -1,8 +1,10 @@
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 import { parse } from 'yaml'
+import { ProjectDir } from '@agent-hub/protocol'
+import type { ProjectDecl } from '@agent-hub/protocol'
 import { WorkerConfigSchema, WorkspaceHarnessConfig } from './schema.js'
 import type { WorkerConfig } from './schema.js'
 import { resolveWorkspaceRoot, withinWorkspace } from '../security/workspace.js'
@@ -67,8 +69,21 @@ export function resolveWorkspaces(config: WorkerConfig, path = defaultWorkerConf
   return config
 }
 
+const ignoredProjectDirs = new Set(['node_modules', 'dist', 'build', 'target', 'tmp', 'temp'])
+/** 工作区根目录下的一级子文件夹即项目；只读目录名，不跟随符号链接，不上报路径。 */
+export function scanProjects(root: string): ProjectDecl[] {
+  try {
+    return readdirSync(root, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && ProjectDir.test(entry.name) && !ignoredProjectDirs.has(entry.name.toLowerCase()))
+      .map(entry => ({ dir: entry.name, isGitRepo: existsSync(join(root, entry.name, '.git')) }))
+      .sort((a, b) => a.dir.localeCompare(b.dir)).slice(0, 64)
+  } catch { return [] }
+}
+export function workspaceProjects(config: ReturnType<typeof loadWorkerConfig>) {
+  return Object.fromEntries(config.workspaces.map(ws => [ws.id, scanProjects(ws.path)]))
+}
 export function workspaceDeclarations(config: ReturnType<typeof loadWorkerConfig>) {
   return config.workspaces.map(({ id, label, allowedAdapters, maxProfile, maxConcurrent, path }) => ({
-    id, label, allowedAdapters, maxProfile, maxConcurrent, isGitRepo: existsSync(join(path, '.git')),
+    id, label, allowedAdapters, maxProfile, maxConcurrent, isGitRepo: existsSync(join(path, '.git')), projects: scanProjects(path),
   }))
 }

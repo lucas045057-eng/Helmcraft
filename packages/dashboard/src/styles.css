@@ -230,6 +230,9 @@ tbody tr:last-child td { border-bottom: 0; }
 
 .system-page, .project-hub { display: grid; gap: 16px; min-width: 0; }
 .project-hub .section-heading { margin-bottom: 0; }
+.workspace-picker { display: inline-flex; align-items: center; gap: 8px; margin-right: auto; margin-left: 16px; font-size: 13px; color: var(--muted); }
+.workspace-picker select { min-width: 160px; }
+.project-pill { margin-left: 6px; font-size: 12px; }
 .project-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 235px), 1fr)); gap: 10px; }
 .project-card { display: grid; align-content: start; justify-content: stretch; gap: 8px; min-width: 0; padding: 14px; background: var(--surface); text-align: left; white-space: normal; }
 .project-card[aria-pressed="true"] { border-color: var(--accent); background: #132923; }
