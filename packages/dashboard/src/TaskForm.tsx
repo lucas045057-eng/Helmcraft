@@ -49,6 +49,8 @@ export function TaskFields({ workers, task, defaultWorkerId, defaultWorkspaceId,
       <option value="">{task ? '保持原设置' : '自动选择'}</option>
       {adapters.map(adapter => <option key={adapter}>{adapter}</option>)}
     </select></label>
+    {!task && <label>模型<input name="model" data-testid="task-model" maxLength={128} pattern="[A-Za-z0-9][A-Za-z0-9._:/\[\]\-]*"
+      placeholder="不填 = 用该 Agent 的默认模型" title="例如 opus、sonnet，或完整模型 ID" /></label>}
     <label>权限档位<select name="profile" data-testid="task-profile" defaultValue={task?.profile ?? defaultProfile ?? 'edit'}>
       {Profile.options.map(profile => <option key={profile}>{profile}</option>)}
     </select></label>
@@ -67,9 +69,9 @@ export function TaskFields({ workers, task, defaultWorkerId, defaultWorkspaceId,
 export function readTaskFields(form: HTMLFormElement, task?: TaskDetail) {
   const input = new FormData(form)
   const value = (key: string) => String(input.get(key) ?? '')
-  const adapter = value('adapter'), worker = value('requiredWorkerId'), methodId = value('methodId')
+  const adapter = value('adapter'), worker = value('requiredWorkerId'), methodId = value('methodId'), model = value('model').trim()
   const prompt = value('prompt'), profile = Profile.parse(value('profile')), workspaceId = value('workspaceId'), subdir = value('subdir')
-  const fields = { prompt, profile, workspaceId, ...(subdir && { subdir }), ...(adapter && { adapter: AdapterId.parse(adapter) }), ...(worker && { requiredWorkerId: worker }), ...(!task && methodId && { methodId }) }
+  const fields = { prompt, profile, workspaceId, ...(subdir && { subdir }), ...(adapter && { adapter: AdapterId.parse(adapter) }), ...(worker && { requiredWorkerId: worker }), ...(!task && methodId && { methodId }), ...(!task && model && { model }) }
   const overrides: ApprovalOverrides = {
     ...(prompt !== task?.prompt && { prompt }), ...(profile !== task?.profile && { profile }),
     ...(workspaceId !== task?.workspaceId && { workspaceId }),

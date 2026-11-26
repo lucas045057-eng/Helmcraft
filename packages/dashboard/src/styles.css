@@ -230,6 +230,24 @@ tbody tr:last-child td { border-bottom: 0; }
 
 .system-page, .project-hub { display: grid; gap: 16px; min-width: 0; }
 .project-hub .section-heading { margin-bottom: 0; }
+.agents-page { display: grid; gap: 16px; }
+.agent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 12px; }
+.agent-card { display: grid; gap: 12px; align-content: start; padding: 16px; border: 1px solid var(--line, #2a3446); border-radius: 10px; background: var(--surface); min-width: 0; }
+.agent-card header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.agent-card h3 { margin: 0; display: flex; gap: 8px; align-items: center; }
+.agent-card h4 { margin: 0 0 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
+.model-picker { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.model-picker label { display: grid; gap: 4px; flex: 1 1 200px; font-size: 13px; color: var(--muted); }
+.quota-list { display: grid; gap: 6px; }
+.quota-row { display: grid; grid-template-columns: 96px 1fr 44px auto; gap: 8px; align-items: center; font-size: 13px; }
+.quota-bar { height: 8px; border-radius: 4px; background: rgba(145, 163, 188, .2); overflow: hidden; }
+.quota-bar i { display: block; height: 100%; background: var(--accent); }
+.quota-bar.warn i { background: #e0a43a; }
+.quota-bar.danger i { background: #e05a5a; }
+.usage-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.usage-cell { display: grid; gap: 2px; padding: 8px; border-radius: 8px; background: rgba(145, 163, 188, .08); }
+.by-model table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.by-model th, .by-model td { text-align: left; padding: 4px 6px; border-bottom: 1px solid rgba(145, 163, 188, .15); }
 .workspace-picker { display: inline-flex; align-items: center; gap: 8px; margin-right: auto; margin-left: 16px; font-size: 13px; color: var(--muted); }
 .workspace-picker select { min-width: 160px; }
 .project-pill { margin-left: 6px; font-size: 12px; }

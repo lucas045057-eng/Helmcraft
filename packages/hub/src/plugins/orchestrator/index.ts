@@ -21,6 +21,7 @@ import { TimerWheel } from './timer-wheel.js'
 import { reconcileWorker } from './recovery.js'
 import { listTasks, logs, overview } from './queries.js'
 import { listProjects } from './projects.js'
+import { agentOverview, defaultModelFor, recordAgentMeta } from './agents.js'
 
 import type { HubConfig } from '../../config/schema.js'
 import { applyVerifyEvent, finishVerification, applyHarnessEvent, harnessView, planHarness, policyFor, toWireDirective, verificationRecord } from './harness.js'
@@ -609,6 +610,8 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       void guardAsync(this.ctx, this.failUnreadableAttachment(task.id, run.id, run.workerId, attachmentError), 'fail unreadable attachment')
       return
     }
+    // 任务没指定模型时，用面板「模型与用量」里为该 Agent 设的默认模型（个人项目流水线按角色固定模型，不套用）
+    const model = task.model ?? (plan || step ? null : defaultModelFor(this.db, run.adapter))
     const payload: RunDispatch = { taskId: task.id, taskNo: task.taskNo, runId: run.id, attempt: run.attempt,
       adapter: run.adapter as AdapterId, workspaceId: run.workspaceId, profile: task.profile, prompt: withMethod(task.prompt, task.methodJson),
       timeoutMs: task.timeoutMs, idleTimeoutMs: this.config.tasks.idleTimeoutMs, notAfter: run.notAfter,
@@ -620,7 +623,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         ...(planOpts?.noChecks && { noChecks: true as const }) } } :
         step ? { personal: personalDispatch(this.db,step), ...(harness && { harness }) } : harness && { harness }),
       origin: { source: task.source, actorType: task.requesterType },
-      ...(task.subdir && { subdir: task.subdir }), ...(task.model && { model: task.model }),
+      ...(task.subdir && { subdir: task.subdir }), ...(model && { model }),
       ...(task.resumeSessionId && (!source || source.adapter === run.adapter) && { resume: { cliSessionId: task.resumeSessionId } }),
     }
     this.send(run, { type: 'run.dispatch', payload })
@@ -685,6 +688,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     const stateful = normalized.some(event => event.kind !== 'log' && event.kind !== 'agent' && event.kind !== 'gap')
     const enqueue = () => this.ctx.store.ingest.enqueue(id, normalized, (db, accepted) => {
       persisted = accepted
+      recordAgentMeta(db, run, accepted, this.now())
       if (stateful) for (const event of accepted) this.applyRunEvent(db, run, event, effects)
     })
     const stored = stateful ? await this.mutex.runExclusive(run.taskId, async () => {
@@ -1030,6 +1034,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   logs(ref: string, id: string, query: LogsQuery) { return logs(this.db, this.requireTask(ref).id, id, query) }
   listWorkers() { return this.ctx.workers.list() }
   listProjects() { return listProjects(this.db, this.listWorkers()) }
+  agentOverview() { return agentOverview(this.db, this.listWorkers(), this.now(), this.localDate) }
   setWorkerDrain(id: string, drain: boolean, actor: Actor) { return this.ctx.workers.setDrain(id, drain, actor) }
   overview() {
     const view = overview(this.db, this.ctx.workers, this.now(), this.paused, this.localDate)

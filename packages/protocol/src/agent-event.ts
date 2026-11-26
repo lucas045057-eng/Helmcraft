@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { QuotaWindow } from './dashboard/agents.js'
 
 export const AgentEvent = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('init'), model: z.string().optional(), tools: z.array(z.string()).max(200).optional() }),
@@ -16,6 +17,7 @@ export const AgentEvent = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('usage'), inputTokens: z.number().int().optional(), outputTokens: z.number().int().optional(),
     costUsd: z.number().optional() }),
   z.strictObject({ type: z.literal('error'), message: z.string().max(4000), fatal: z.boolean() }),
+  z.strictObject({ type: z.literal('quota'), windows: z.array(QuotaWindow).min(1).max(8) }),   // 订阅额度快照（变化时才发）
 ])
 
 export type AgentEvent = z.infer<typeof AgentEvent>

@@ -59,12 +59,37 @@ function validBlock(block: Row, assistant: boolean) {
   }
 }
 
+/** rate_limit_info.unifiedWindows → [{ name, utilization, resetsAt(ms) }]；旧格式只有单个窗口时退回 rateLimitType。 */
+export function quotaWindows(info: Row | undefined) {
+  if (!info) return []
+  const windows = row(info.unifiedWindows)
+  const entries = windows ? Object.entries(windows) : str(info.rateLimitType) ? [[str(info.rateLimitType)!, info] as [string, unknown]] : []
+  return entries.flatMap(([name, value]) => {
+    const item = row(value), utilization = item?.utilization
+    if (typeof utilization !== 'number' || !Number.isFinite(utilization) || utilization < 0 || utilization > 10 || !/^[\w-]{1,32}$/u.test(name)) return []
+    const resets = item?.resetsAt
+    const status = str(item?.status)
+    return [{ name, utilization: Math.round(utilization * 1000) / 1000,
+      resetsAt: typeof resets === 'number' && Number.isFinite(resets) ? Math.round(resets < 1e12 ? resets * 1000 : resets) : null,
+      ...(status && status.length <= 32 && { status }) }]
+  }).slice(0, 8)
+}
+
 function createParser() {
   const state = new ParserState()
+  let lastQuota = ''
   return structuredParser(state, event => {
     switch (event.type) {
+      // 订阅额度：只在百分比或重置时间变化时上报，供面板「模型与用量」显示
+      case 'rate_limit_event': {
+        const windows = quotaWindows(row(event.rate_limit_info))
+        const key = JSON.stringify(windows)
+        if (!windows.length || key === lastQuota) return []
+        lastQuota = key
+        return [agent({ type: 'quota', windows })]
+      }
       // 新版 CLI 的心跳与统计事件：不展示，也不算作格式异常
-      case 'rate_limit_event': case 'tool_progress': case 'stream_event': return []
+      case 'tool_progress': case 'stream_event': return []
       case 'system': {
         const id = sessionId(event.session_id)
         if (event.subtype !== 'init') return typeof event.subtype === 'string' ? [] : undefined

@@ -13,6 +13,7 @@ import type { Scope } from './ProjectHub.js'
 import { useDashboard } from './store.js'
 import { SystemPage } from './SystemPage.js'
 import { MethodLibrary } from './MethodLibrary.js'
+import { AgentsPage } from './AgentsPage.js'
 import { readTaskFields, TaskFields } from './TaskForm.js'
 import type { TaskDefaults } from './TaskForm.js'
 
@@ -120,7 +121,7 @@ function Console({ logout }: { logout: () => Promise<void> }) {
   const clockOffset = useDashboard(state => state.clockOffset)
   const live = useDashboard(state => state.tasks)
   const [time, setTime] = useState(Date.now)
-  const [page, setPage] = useState<'overview' | 'methods' | 'system'>('overview')
+  const [page, setPage] = useState<'overview' | 'methods' | 'agents' | 'system'>('overview')
   const [lane, setLane] = useState('')
   const [history, setHistory] = useState(false)
   const [taskId, setTaskId] = useState<string | undefined>(() => /^\/tasks\/(tsk_[0-9A-HJKMNP-TV-Z]{26})\/?$/.exec(window.location.pathname)?.[1])
@@ -152,6 +153,7 @@ function Console({ logout }: { logout: () => Promise<void> }) {
     <nav className="main-tabs" aria-label="指挥台">
       <button type="button" aria-current={page === 'overview' ? 'page' : undefined} data-testid="operations-tab" onClick={() => setPage('overview')}>▦ 指挥台</button>
       <button type="button" aria-current={page === 'methods' ? 'page' : undefined} data-testid="methods-tab" onClick={() => setPage('methods')}>📚 方法库</button>
+      <button type="button" aria-current={page === 'agents' ? 'page' : undefined} data-testid="agents-tab" onClick={() => setPage('agents')}>🤖 模型与用量</button>
       <button type="button" aria-current={page === 'system' ? 'page' : undefined} data-testid="system-tab" onClick={() => setPage('system')}>⚙ 系统治理</button>
     </nav>
     <main className="console-body">{page === 'overview' ? <>
@@ -164,7 +166,7 @@ function Console({ logout }: { logout: () => Promise<void> }) {
           setWorkspace={workspaceId => setScope({ workspaceId, subdir: '' })}
           now={time + clockOffset} lane={lane} setLane={setLane} open={setTaskId} initialMode="table" />
       </> : <Today live={live} now={time + clockOffset} workspaceId={scope.workspaceId} subdir={scope.subdir} open={setTaskId} showHistory={() => setHistory(true)} />}
-    </> : page === 'methods' ? <MethodLibrary /> : <SystemPage workers={workers} now={time + clockOffset} open={setTaskId} />}</main>
+    </> : page === 'methods' ? <MethodLibrary /> : page === 'agents' ? <AgentsPage now={time + clockOffset} /> : <SystemPage workers={workers} now={time + clockOffset} open={setTaskId} />}</main>
     {createDefaults && <CreateDialog close={closeCreate} workers={workers} {...createDefaults} />}
     {taskId && <MissionDrawer key={taskId} id={taskId} workers={workers} connection={client} close={closeTask} open={setTaskId} />}
   </div>

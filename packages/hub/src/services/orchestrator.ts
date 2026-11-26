@@ -1,5 +1,5 @@
 import type { TaskRow } from './store.js'
-import type { AutopilotPreflightRequest, AutopilotPreflightResponse, AutopilotStartRequest, PersonalPlanRequest, ProjectBriefingView, ProjectOverview, RunArtifactView, RunBriefingRequest } from '@agent-hub/protocol'
+import type { AgentOverview, AutopilotPreflightRequest, AutopilotPreflightResponse, AutopilotStartRequest, PersonalPlanRequest, ProjectBriefingView, ProjectOverview, RunArtifactView, RunBriefingRequest } from '@agent-hub/protocol'
 import type { AcceptRunRequest, HandoffPreview, HandoffPreviewQuery, HandoffTaskRequest, RunHarnessView, WorkspacePointerView, Actor, ApprovalOverrides, CreateTaskRequest, OverviewView, TaskDetailView, TaskOrigin, TaskView, TaskListQuery, TaskListResponse, LogsQuery, LogsResponse, DeliverResultRequest } from '@agent-hub/protocol'
 export type CreateTaskInput = Pick<CreateTaskRequest, 'prompt' | 'workspaceId'> & Partial<CreateTaskRequest> & { origin?: TaskOrigin }
 export interface InitialArtifact {
@@ -21,6 +21,7 @@ export interface Orchestrator {
   runHarness(id: string, runId: string): RunHarnessView
   listWorkspacePointers(): WorkspacePointerView[]
   listProjects(): ProjectOverview[]
+  agentOverview(): AgentOverview[]
   acceptRun(workerId: string, workspaceId: string, actor: Actor, input: AcceptRunRequest): Promise<WorkspacePointerView>
   setResultSender(send: ResultSender): () => void
   metrics(): { verificationOutcomes: Record<'passed' | 'failed' | 'skipped' | 'unverified', number>; harnessDispatches: number; harnessUnnegotiatedEvents: number; pointerCasRejected: number; staleRunEvents: number; mutexKeys: number; timers: number }
