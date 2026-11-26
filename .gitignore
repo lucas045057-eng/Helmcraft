@@ -8,3 +8,6 @@ deploy/data/
 *.core
 core
 gate-test.txt
+
+# archify 生成的流程图输出
+.archify/

@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # 在 Linux/WSL 构建 Hub 生产包（与 VPS 同为 Ubuntu 24.04 + Node 24，原生 better-sqlite3 可直接复用）。
-# 用法：deploy/vps/build-bundle.sh [输出路径]；再把 tgz、hub.yaml、hub.env、helmcraft-hub.service 传到 VPS /root 后执行 install-hub.sh
+# 用法：在要发布的版本上（先自行 checkout）执行 deploy/vps/build-bundle.sh [输出路径]；再把 tgz、hub.yaml、hub.env、helmcraft-hub.service 传到 VPS /root 后执行 install-hub.sh
 set -euo pipefail
 export PATH=$HOME/.local/bin:$PATH COREPACK_ENABLE_DOWNLOAD_PROMPT=0 CI=true
-cd ~/helmcraft
-git pull -q --ff-only origin main
+cd "$(dirname "$0")/../.."
 git log -1 --oneline
 pnpm install --frozen-lockfile >/dev/null
 pnpm --filter '@agent-hub/hub...' --filter '@agent-hub/dashboard...' -r build >/dev/null
