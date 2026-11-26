@@ -63,9 +63,12 @@ function createParser() {
   const state = new ParserState()
   return structuredParser(state, event => {
     switch (event.type) {
+      // 新版 CLI 的心跳与统计事件：不展示，也不算作格式异常
+      case 'rate_limit_event': case 'tool_progress': case 'stream_event': return []
       case 'system': {
         const id = sessionId(event.session_id)
-        if (event.subtype !== 'init' || !id) return
+        if (event.subtype !== 'init') return typeof event.subtype === 'string' ? [] : undefined
+        if (!id) return
         const model = str(event.model)
         const tools = Array.isArray(event.tools) ? event.tools.filter((tool): tool is string => typeof tool === 'string').slice(0, 200) : undefined
         return [agent({ type: 'init', ...(model && { model }), ...(tools && { tools }) }), ...state.session(id)]

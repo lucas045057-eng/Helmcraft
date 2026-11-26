@@ -76,26 +76,30 @@ export class ParserState {
 
 export function structuredParser(state: ParserState, decode: (data: Row) => ParsedItem[] | undefined,
   flush?: (force: boolean) => ParsedItem[]): OutputParser {
-  let lines = 0, malformed = 0
+  // malformed = 不是 JSON 对象的行；unknown = 合法 JSON 但本解析器不认识的事件类型。
+  // CLI 新版本常加新事件（如 Claude 的 thinking_tokens / rate_limit_event），这不代表格式变了，
+  // 只有大量非 JSON 行，或一行都没认出来时才降级为原始输出。
+  let lines = 0, malformed = 0, unknown = 0
   const tail: string[] = []
   return {
     onStdout(line) {
       lines++
       tail.push(line.slice(0, 20_000))
       if (tail.length > 50) tail.shift()
-      try {
-        const data = row(JSON.parse(line))
-        const items = data && decode(data)
-        if (items !== undefined) return items
-      } catch { /* Unrecognized CLI output is retained as a log. */ }
-      malformed++
+      let data: Row | undefined
+      try { data = row(JSON.parse(line)) } catch { /* Unrecognized CLI output is retained as a log. */ }
+      const items = data && decode(data)
+      if (items !== undefined) return items
+      if (data) unknown++
+      else malformed++
       return [...(flush?.(true) ?? []), { kind: 'log', stream: 'stdout', text: line }]
     },
     onStderr: text => [{ kind: 'log', stream: 'stderr', text }],
     ...(flush && { flushPending: () => flush(false) }),
     finish(exit, emit) {
       for (const item of flush?.(true) ?? []) emit?.(item)
-      return state.finish(exit, malformed > lines / 2 ? tail.join('\n').slice(-20_000) : undefined)
+      const unreadable = malformed > lines / 2 || (lines > 0 && malformed + unknown === lines)
+      return state.finish(exit, unreadable ? tail.join('\n').slice(-20_000) : undefined)
     },
   }
 }
