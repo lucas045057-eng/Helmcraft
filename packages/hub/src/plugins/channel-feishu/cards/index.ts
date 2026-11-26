@@ -62,20 +62,16 @@ function verificationBadge(info: NonNullable<RunHarnessSummary['verification']>,
 export function renderStreamingCard(m: TaskCardModel, audience: Audience): CardJson {
   const [label, color] = states[m.status]
   const ended = terminal(m.status)
-  const title = ['#' + m.taskNo, m.adapter ?? '自动', label]
+  const title: string[] = [m.adapter ?? '自动', label]
   const fields: string[] = []
   const actions: object[] = []
   const h = audience === 'owner' ? m.harness : undefined
   if (ended) {
     if (m.finishedAt !== null && m.startedAt !== null) title.push(Math.max(0, Math.floor((m.finishedAt - m.startedAt) / 1000)) + 's')
-    if (m.filesChanged !== undefined) title.push('改动 ' + m.filesChanged + ' 个文件')
+    if ((m.filesChanged ?? 0) > 0) title.push('改动 ' + m.filesChanged + ' 个文件')
     if (m.resultDeliveryStatus === 'pending_review') fields.push('结果等待负责人审核')
     if (m.resultDeliveryStatus === 'suppressed') fields.push('负责人未发送结果')
-    if (h?.verification) fields.push(verificationBadge(h.verification, h.tamperTotal ?? 0))
-    else if (m.verificationState) {
-      const badges = { passed: '✅ 验证通过', failed: '❌ 验证失败', skipped: '已跳过验证', unverified: '未验证', pending: '等待验证', running: '验证中' }
-      fields.push(badges[m.verificationState])
-    }
+
     const changes = h?.board?.filter(item => ['created', 'modified', 'deleted'].includes(item.change))
     if (changes?.length) fields.push('黑板：' + changes.map(item => item.file + ' ' + item.change).join(' · '))
     if (m.allowedActions.includes('retry')) actions.push(button(m, 'retry', '重试'))
@@ -90,6 +86,17 @@ export function renderStreamingCard(m: TaskCardModel, audience: Audience): CardJ
     if (m.allowedActions.includes('cancel')) actions.push(button(m, 'cancel', '中止'))
     if (audience === 'owner' && m.panelUrl) actions.push({ tag: 'button', text: plain('打开面板'),
       behaviors: [{ type: 'open_url', default_url: m.panelUrl }] })
+  }
+  const info = h?.verification
+  const state = info?.state ?? m.verificationState
+  if (state && (ended || state === 'running')) {
+    if (info) {
+      if (state !== 'skipped' || !['NO_COMMANDS', 'NO_CHANGES', 'CLI_NOT_SUCCEEDED'].includes(info.reason ?? ''))
+        fields.push(verificationBadge(info, h?.tamperTotal ?? 0))
+    } else if (state !== 'skipped') {
+      const badges = { passed: '✅ 验证通过', failed: '❌ 验证失败', unverified: '未验证', pending: '等待验证', running: '验证中' }
+      fields.push(badges[state])
+    }
   }
   const markdown = (content: string) => ({ tag: 'markdown', content: content.replace(/([\\`*_\[\]<>])/gu, '\\$1') })
   return fit(title.join(' · '), color, actions, fields.map(text => displayText(text, audience)), m.cardMaxBytes ?? 28672, markdown)

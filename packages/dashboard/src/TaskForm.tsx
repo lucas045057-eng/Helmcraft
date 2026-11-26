@@ -2,8 +2,14 @@ import { useState } from 'react'
 import { AdapterId, Profile } from '@agent-hub/protocol'
 import type { ApprovalOverrides, TaskDetail, WorkerView } from '@agent-hub/protocol'
 
-export function TaskFields({ workers, task }: { workers: WorkerView[]; task?: TaskDetail }) {
-  const [workerId, setWorkerId] = useState('')
+export interface TaskDefaults {
+  defaultWorkerId?: string
+  defaultWorkspaceId?: string
+  defaultProfile?: Profile
+}
+
+export function TaskFields({ workers, task, defaultWorkerId, defaultWorkspaceId, defaultProfile }: TaskDefaults & { workers: WorkerView[]; task?: TaskDetail }) {
+  const [workerId, setWorkerId] = useState(defaultWorkerId ?? '')
   const candidates = workers.filter(worker => worker.status === 'active' && (!workerId || worker.id === workerId))
   const workspaces = new Map(candidates.flatMap(worker => worker.workspaces.map(workspace => [workspace.id, workspace.label] as const)))
   if (task && !workspaces.has(task.workspaceId)) workspaces.set(task.workspaceId, task.workspaceId)
@@ -14,7 +20,7 @@ export function TaskFields({ workers, task }: { workers: WorkerView[]; task?: Ta
       <option value="">{task ? '保持原设置' : '自动调度'}</option>
       {workers.filter(worker => worker.status === 'active').map(worker => <option key={worker.id} value={worker.id}>{worker.displayName} · {worker.id}</option>)}
     </select></label>
-    <label>工作区<select name="workspaceId" data-testid="task-workspace" defaultValue={task?.workspaceId ?? ''} required>
+    <label>工作区<select name="workspaceId" data-testid="task-workspace" defaultValue={task?.workspaceId ?? defaultWorkspaceId ?? ''} required>
       <option value="" disabled>选择工作区</option>
       {[...workspaces].map(([id, label]) => <option key={id} value={id}>{label || id}</option>)}
     </select></label>
@@ -22,7 +28,7 @@ export function TaskFields({ workers, task }: { workers: WorkerView[]; task?: Ta
       <option value="">{task ? '保持原设置' : '自动选择'}</option>
       {adapters.map(adapter => <option key={adapter}>{adapter}</option>)}
     </select></label>
-    <label>权限档位<select name="profile" data-testid="task-profile" defaultValue={task?.profile ?? 'edit'}>
+    <label>权限档位<select name="profile" data-testid="task-profile" defaultValue={task?.profile ?? defaultProfile ?? 'edit'}>
       {Profile.options.map(profile => <option key={profile}>{profile}</option>)}
     </select></label>
     <label className="full">Prompt<textarea name="prompt" data-testid="task-prompt" rows={5} maxLength={32000}

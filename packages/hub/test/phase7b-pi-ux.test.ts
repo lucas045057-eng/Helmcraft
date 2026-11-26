@@ -190,7 +190,9 @@ it('UX-14 renders the verification panel, tamper paths, autofix info and the pip
     await pw(panel).toContainText('vitest.config.ts')
     await pw(panel).toContainText('自动修复 0 次 · TAMPER_RISK')
     await pw(panel.getByTestId('verification-fix-same')).toHaveCount(0)
-    await pw(page.getByTestId('task-card-' + tampered.taskNo).getByTestId('verification-badge')).toHaveText('已跳过验证')
+    const tamperedCard = page.getByTestId('task-card-' + tampered.taskNo)
+    await pw(tamperedCard).toBeAttached()
+    await pw(tamperedCard.getByTestId('verification-badge')).toHaveCount(0)
     // 第二个 Run：验证失败 + 自动修复信息 → 面板出现两个修复入口
     const failed = await api.createTask({ adapter: 'mock', workspaceId: 'sandbox', profile: 'edit', prompt: mockPrompt }, owner)
     const failedRun = await dispatch(worker, failed.id)

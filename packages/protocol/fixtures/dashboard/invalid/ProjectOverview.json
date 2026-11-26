@@ -1,0 +1,24 @@
+{
+  "workerId": "desktop",
+  "workspaceId": "forma",
+  "label": "Soren_project",
+  "isGitRepo": true,
+  "workerOnline": true,
+  "maxProfile": "full",
+  "allowedAdapters": [
+    "codex"
+  ],
+  "activeTasks": 0,
+  "totalTasks": -1,
+  "succeededTasks": 0,
+  "failedTasks": 0,
+  "lastActiveAt": null,
+  "latestTaskId": null,
+  "latestTaskNo": null,
+  "latestRunId": null,
+  "latestAdapter": null,
+  "latestVerification": null,
+  "pointer": null,
+  "board": null,
+  "boardCapturedAt": null
+}

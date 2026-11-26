@@ -20,6 +20,7 @@ export function listTasks(db: Repos, query: TaskListQuery, view: (task: TaskRow)
     query.status ? inArray(tasks.status, query.status) : undefined,
     query.adapter ? sql`coalesce(tasks.adapter, (select adapter from task_runs where task_id = tasks.id order by run_seq desc limit 1)) = ${query.adapter}` : undefined,
     query.workerId ? sql`(select worker_id from task_runs where task_id = tasks.id order by run_seq desc limit 1) = ${query.workerId}` : undefined,
+    query.workspaceId ? eq(tasks.workspaceId, query.workspaceId) : undefined,
     query.source ? eq(tasks.source, query.source) : undefined,
     query.requesterId ? eq(tasks.requesterId, query.requesterId) : undefined,
     query.parentTaskId ? eq(tasks.parentTaskId, query.parentTaskId) : undefined,

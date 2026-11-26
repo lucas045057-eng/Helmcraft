@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useInfiniteQuery } from '@tanstack/react-query'
 import { TaskListResponse } from '@agent-hub/protocol'
-import type { TaskSummary, WorkerView } from '@agent-hub/protocol'
+import type { ProjectOverview, TaskSummary, WorkerView } from '@agent-hub/protocol'
 import { errorText, request, searchParams } from './api.js'
 import { VerificationBadge } from './harness/VerificationPanel.js'
 import { duration, lanes, sourceLabels, statusLabels } from './format.js'
@@ -11,7 +11,7 @@ function TaskCard({ task, now, open }: { task: TaskSummary; now: number; open: (
     <span className="task-card-top"><strong>#{task.taskNo}</strong><span className="pill" title={task.origin.feishu?.chatName ?? task.requester.name ?? task.requester.id}>{sourceLabels[task.origin.source]}</span></span>
     <span className="task-title">{task.title}</span>
     <span className="task-meta">{task.adapter ?? '自动 CLI'} · {task.workerId ?? '未分配'}</span>
-    {task.verification && <VerificationBadge state={task.verification} />}
+    {task.verification && task.verification !== 'skipped' && <VerificationBadge state={task.verification} />}
     {task.lastProgress && <span className="task-progress">{task.lastProgress}</span>}
     {task.scheduleHint && <span className="warning task-progress">{task.scheduleHint}</span>}
     <span className="task-card-bottom"><span>{statusLabels[task.status]}</span>
@@ -19,18 +19,19 @@ function TaskCard({ task, now, open }: { task: TaskSummary; now: number; open: (
   </button>
 }
 
-export function Pipeline({ live, workers, now, lane, setLane, open }: { live: Record<string, TaskSummary>; workers: WorkerView[];
+export function Pipeline({ live, workers, now, lane, setLane, open, projects, workspaceId, setWorkspace }: { live: Record<string, TaskSummary>; workers: WorkerView[];
+  projects: ProjectOverview[]; workspaceId: string; setWorkspace(id: string): void;
   now: number; lane: string; setLane: (value: string) => void; open: (id: string) => void }) {
   const [mode, setMode] = useState<'kanban' | 'table'>('kanban')
-  const [workerId, setWorker] = useState('')
+  const workspaces = new Map(projects.map(project => [project.workspaceId, project.label]))
   const [adapter, setAdapter] = useState('')
   const [keyword, setKeyword] = useState('')
   const statuses = lanes.find(item => item.id === lane)?.statuses
   const q = keyword.trim()
   const query = useInfiniteQuery({
-    queryKey: ['task-history', lane, workerId, adapter, q], initialPageParam: '',
+    queryKey: ['task-history', lane, workspaceId, adapter, q], initialPageParam: '',
     queryFn: ({ pageParam, signal }) => request('/tasks' + searchParams({
-      status: statuses?.join(','), workerId, adapter, q, limit: '50', cursor: pageParam,
+      status: statuses?.join(','), workspaceId, adapter, q, limit: '50', cursor: pageParam,
     }), TaskListResponse, { signal }),
     getNextPageParam: page => page.nextCursor,
     refetchInterval: q ? 3000 : false,
@@ -43,9 +44,9 @@ export function Pipeline({ live, workers, now, lane, setLane, open }: { live: Re
       if (previous && previous.version > task.version) continue
       if (!q || previous || task.title.toLocaleLowerCase().includes(q.toLocaleLowerCase())) joined.set(task.id, task)
     }
-    return [...joined.values()].filter(task => (!statuses || statuses.includes(task.status)) && (!workerId || workerId === task.workerId) &&
+    return [...joined.values()].filter(task => (!statuses || statuses.includes(task.status)) && (!workspaceId || workspaceId === task.workspaceId) &&
       (!adapter || adapter === task.adapter)).sort((a, b) => b.taskNo - a.taskNo)
-  }, [query.data, live, q, statuses, workerId, adapter])
+  }, [query.data, live, q, statuses, workspaceId, adapter])
   const shownLanes = lane ? lanes.filter(item => item.id === lane) : lanes
   const adapters = [...new Set([...workers.flatMap(worker => worker.adapters.map(item => item.id)), ...filtered.flatMap(t => t.adapter ? [t.adapter] : [])])]
   return <section data-testid="task-pipeline">
@@ -58,8 +59,8 @@ export function Pipeline({ live, workers, now, lane, setLane, open }: { live: Re
       <select aria-label="任务状态" value={lane} onChange={e => setLane(e.target.value)} data-testid="task-filter-status">
         <option value="">全部状态</option>{lanes.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
       </select>
-      <select aria-label="Worker" value={workerId} onChange={e => setWorker(e.target.value)} data-testid="task-filter-worker">
-        <option value="">全部 Worker</option>{workers.map(worker => <option key={worker.id} value={worker.id}>{worker.displayName}</option>)}
+      <select aria-label="项目工作区" value={workspaceId} onChange={e => setWorkspace(e.target.value)} data-testid="task-filter-workspace">
+        <option value="">全部项目</option>{[...workspaces].map(([id, label]) => <option key={id} value={id}>{label}</option>)}
       </select>
       <select aria-label="CLI" value={adapter} onChange={e => setAdapter(e.target.value)} data-testid="task-filter-adapter">
         <option value="">全部 CLI</option>{adapters.map(id => <option key={id}>{id}</option>)}
@@ -77,7 +78,7 @@ export function Pipeline({ live, workers, now, lane, setLane, open }: { live: Re
       <tr><th>任务</th><th>来源</th><th>状态</th><th>CLI</th><th>Worker</th><th>耗时</th><th>进展</th></tr>
     </thead><tbody>{filtered.map(task => <tr key={task.id} data-status={task.status}>
       <td><button type="button" className="text-button" onClick={() => open(task.id)} data-testid={'task-row-' + task.taskNo}>#{task.taskNo} {task.title}</button></td>
-      <td>{sourceLabels[task.origin.source]}</td><td>{statusLabels[task.status]} {task.verification && <VerificationBadge state={task.verification} />}</td><td>{task.adapter ?? '—'}</td><td>{task.workerId ?? '—'}</td>
+      <td>{sourceLabels[task.origin.source]}</td><td>{statusLabels[task.status]} {task.verification && task.verification !== 'skipped' && <VerificationBadge state={task.verification} />}</td><td>{task.adapter ?? '—'}</td><td>{task.workerId ?? '—'}</td>
       <td>{duration(task.startedAt === null ? null : (task.finishedAt ?? now) - task.startedAt)}</td><td>{task.lastProgress ?? task.scheduleHint ?? '—'}</td>
     </tr>)}</tbody></table>{!filtered.length && <p className="empty-panel">暂无匹配任务</p>}</div>}
     {query.hasNextPage && <button type="button" className="more" data-testid="load-history" onClick={() => void query.fetchNextPage()}

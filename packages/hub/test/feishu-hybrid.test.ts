@@ -1,7 +1,9 @@
 import { expect, it, vi } from 'vitest'
 import { createHash } from 'node:crypto'
 import { canUseCommand, parseCommand } from '@agent-hub/protocol'
-import type { AgentEvent } from '@agent-hub/protocol'
+import type { AgentEvent, VerificationState, VerificationReason } from '@agent-hub/protocol'
+import { renderStreamingCard } from '../src/plugins/channel-feishu/cards/index.js'
+import type { TaskCardModel } from '../src/plugins/channel-feishu/cards/index.js'
 import { extractProgress } from '../src/plugins/channel-feishu/cards/progress.js'
 import { splitResult } from '../src/plugins/channel-feishu/result-text.js'
 import { HubConfigSchema } from '../src/config/schema.js'
@@ -24,6 +26,28 @@ it('keeps card mode, requester visibility and independent permissions closed by 
     expect(HubConfigSchema.parse({ permissions: { [name]: true } }).permissions).toEqual({ ...config.permissions, [name]: true })
   }
   expect(Object.values(config.permissions)).toEqual(Array(6).fill(false))
+})
+
+const streamingModel: TaskCardModel = {
+  id: 'tsk_' + '0'.repeat(26), taskNo: 11, status: 'succeeded', version: 1, prompt: '检查', adapter: 'codex',
+  allowedActions: [], inputRequest: null, profile: 'edit', workspaceId: 'sandbox', scheduleHint: null, attempt: 1,
+  errorCode: null, startedAt: 0, updatedAt: 12000, finishedAt: 12000, filesChanged: 0, resultSummary: '', resultDeliveryStatus: 'not_required',
+}
+const outcomes: [VerificationState, VerificationReason | undefined, string | null][] = [
+  ['skipped', 'NO_COMMANDS', null], ['skipped', 'NO_CHANGES', null], ['skipped', 'CLI_NOT_SUCCEEDED', null],
+  ['passed', undefined, '验证通过'], ['failed', undefined, '验证失败'], ['running', undefined, '验证中'],
+  ['skipped', 'TAMPER_RISK', '修改敏感文件'], ['skipped', 'CONFIG_EXPOSED', '工作区包含节点配置'], ['unverified', 'RUN_LOST', '未验证'],
+]
+it.each(outcomes)('renders hybrid verification %s / %s', (state, reason, expected) => {
+  const model: TaskCardModel = { ...streamingModel, ...(state === 'running' && { status: 'running' }), verificationState: state,
+    harness: { fromRunId: 'run_' + '0'.repeat(26), handoffTargets: [], verification: {
+      state, reason, failed: [], attempts: 0, autoFixAttempts: 0 } } }
+  const card = JSON.stringify(renderStreamingCard(model, 'owner'))
+  expect(card).not.toMatch(/#11|改动 0 个文件/u)
+  if (state !== 'running') expect(card).toContain('codex · 已完成 · 12s')
+  if (expected) expect(card).toContain(expected)
+  else expect(card).not.toMatch(/验证|已跳过/u)
+  if (state === 'skipped') expect(JSON.stringify(renderStreamingCard(model, 'requester'))).not.toMatch(/验证|已跳过/u)
 })
 
 it('shows command lifecycle and compact reasoning only to the owner audience', () => {
@@ -132,7 +156,8 @@ it.each(['failed', 'timed_out'] as const)('sends the %s diagnostic in chat and k
       summary: 'partial work', errorMessage: 'diagnostic detail', exitCode: 1, signal: null }])
     const rows = () => hub.ctx.store.repos.feishu.messages(task.id)
     await eventually(() => rows().filter(row => row.role === 'result_text').length === 2)
-    expect(bot.text(rows().filter(row => row.role === 'result_text')[1]!.messageId)).toContain('diagnostic detail')
+    expect(bot.text(rows().filter(row => row.role === 'result_text')[1]!.messageId)).toBe(
+      (status === 'failed' ? '执行失败' : '执行超时') + '\ndiagnostic detail')
     const card = bot.json(rows().find(row => row.role === 'progress_card')!.messageId)
     expect(card).toContain('重试')
     expect(card).not.toMatch(/partial work|diagnostic detail/u)

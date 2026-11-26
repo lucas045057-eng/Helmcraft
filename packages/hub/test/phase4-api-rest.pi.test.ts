@@ -8,7 +8,8 @@
 import { generateKeyPairSync } from 'node:crypto'
 import { expect, it } from 'vitest'
 import * as api from '@agent-hub/protocol'
-import { enrollWorker, seedRun } from './pi/harness.js'
+import { enrollWorker, eventually, seedRun } from './pi/harness.js'
+import { capabilities, dispatch, finish, mockPrompt, snapshot } from './pi/phase7.js'
 import { ADMIN_TOKEN, expectError, expectSchema, login, onlineWorker, openHarness, rest, settings, useAdminToken } from './pi/rest.js'
 
 useAdminToken()
@@ -29,6 +30,29 @@ async function writeLogs(hub: Parameters<typeof rest>[0], runId: string, from: n
   await hub.ctx.store.ingest.flush()
   await job
 }
+
+it('keeps same-named workspaces separate across workers and preserves historical pointers', async () => {
+  const { hub, cleanup } = await openHarness(settings)
+  try {
+    const first = await onlineWorker(hub, 'first-node', { headers: capabilities })
+    await onlineWorker(hub, 'other-node', { headers: capabilities })
+    const task = await hub.ctx.orchestrator.createTask({ prompt: mockPrompt, workspaceId: 'sandbox',
+      profile: 'edit', adapter: 'mock', requiredWorkerId: 'first-node' }, OWNER)
+    const pre = snapshot('first node handoff')
+    await finish(hub, first, await dispatch(first, task.id), pre, snapshot())
+    // The next registration no longer advertises sandbox. Its accepted run still identifies it.
+    first.close()
+    await eventually(() => hub.ctx.workers.get('first-node')?.connection === 'offline')
+    await onlineWorker(hub, 'first-node', { identity: first.identity, headers: capabilities, workspaces: [] })
+    const token = grant(hub, ['read'])
+    const projects = expectSchema(api.ProjectOverview.array(), await rest(hub)('GET', '/api/v1/projects', { token }))
+    const sandbox = projects.filter(p => p.workspaceId === 'sandbox')
+    expect(sandbox).toHaveLength(2)
+    expect(sandbox[0]).toMatchObject({ workerId: 'first-node', workerOnline: true, allowedAdapters: [], totalTasks: 1,
+      latestTaskId: task.id, pointer: { lastAccepted: { taskId: task.id } }, board: pre, boardCapturedAt: pre.capturedAt })
+    expect(sandbox[1]).toMatchObject({ workerId: 'other-node', totalTasks: 0, latestTaskId: null, board: null, pointer: null })
+  } finally { await cleanup() }
+})
 
 it('API-1 鉴权与系统端点响应严格通过 DTO Schema', async () => {
   const { hub, cleanup } = await openHarness(settings)

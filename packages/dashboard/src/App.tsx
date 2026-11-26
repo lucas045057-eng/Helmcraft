@@ -8,15 +8,15 @@ import { duration } from './format.js'
 import { Login } from './Login.js'
 import { MissionDrawer } from './MissionDrawer.js'
 import { Pipeline } from './Pipeline.js'
-import { PersonalProject } from './PersonalProject.js'
+import { ProjectHub, useProjects } from './ProjectHub.js'
 import { useDashboard } from './store.js'
 import { SystemPage } from './SystemPage.js'
 import { readTaskFields, TaskFields } from './TaskForm.js'
-import { WorkerFleet } from './WorkerFleet.js'
+import type { TaskDefaults } from './TaskForm.js'
 
 const feishuLabels = { disabled: '已关闭', connecting: '连接中', connected: '已连接', reconnecting: '重连中', failed: '异常' }
 const connectionLabels = { connecting: '连接中', live: '实时在线', offline: '连接中断', limited: '连接数已满' }
-function Header({ create, approval, logout }: { create: () => void; approval: () => void; logout: () => void }) {
+function Header({ create, approval, logout, activeProjects }: { create: () => void; approval: () => void; logout: () => void; activeProjects: number | undefined }) {
   const overview = useDashboard(state => state.overview)
   const connection = useDashboard(state => state.connection)
   const hub = overview?.hub
@@ -36,8 +36,8 @@ function Header({ create, approval, logout }: { create: () => void; approval: ()
     </header>
     <div className="metrics" data-testid="overview-metrics">
       <div className="metric"><span>飞书长连接</span><strong><i className={'dot ' + (overview?.feishu.state ?? 'disabled')} />{overview ? feishuLabels[overview.feishu.state] : '—'}</strong></div>
-      {metric('在线 Worker', overview ? overview.workersOnline + ' / ' + overview.workersTotal : '—')}
-      {metric('并发槽位', overview ? overview.slotsUsed + ' / ' + overview.slotsTotal : '—')}
+      {metric('活跃项目', activeProjects ?? '—')}
+      {metric('执行中', overview ? overview.counts.running + overview.counts.dispatching + overview.counts.awaiting_input + overview.counts.cancelling : '—')}
       <button type="button" className="metric approval-metric" data-testid="pending-approval" onClick={approval}>
         <span>待审批</span><strong>{overview?.counts.awaiting_approval ? <i className="dot red" /> : null}{overview?.counts.awaiting_approval ?? '—'}</strong></button>
       {metric('今日成功 / 失败', overview ? overview.today.succeeded + ' / ' + overview.today.failed : '—')}
@@ -48,7 +48,7 @@ function Header({ create, approval, logout }: { create: () => void; approval: ()
   </>
 }
 
-function CreateDialog({ close, workers }: { close: () => void; workers: WorkerView[] }) {
+function CreateDialog({ close, workers, ...defaults }: TaskDefaults & { close: () => void; workers: WorkerView[] }) {
   const cache = useQueryClient()
   const create = useMutation({
     mutationFn: (fields: ReturnType<typeof readTaskFields>['fields']) => request('/tasks', TaskDetail, json('POST', fields)),
@@ -65,7 +65,7 @@ function CreateDialog({ close, workers }: { close: () => void; workers: WorkerVi
       <header className="drawer-header"><h2 id="new-task-title">新建任务</h2>
         <button type="button" aria-label="关闭" onClick={close}>×</button></header>
       <form onSubmit={event => { event.preventDefault(); create.mutate(readTaskFields(event.currentTarget).fields) }}>
-        <TaskFields workers={workers} />
+        <TaskFields workers={workers} {...defaults} />
         {create.error && <p className="error" role="alert">{errorText(create.error)}</p>}
         <div className="dialog-actions"><button type="button" onClick={close}>取消</button>
           <button type="submit" className="primary" data-testid="task-create-submit" disabled={create.isPending}>提交任务</button></div>
@@ -76,7 +76,9 @@ function CreateDialog({ close, workers }: { close: () => void; workers: WorkerVi
 
 function Console({ logout }: { logout: () => Promise<void> }) {
   const cache = useQueryClient()
-  const client = useMemo(() => new DashboardConnection(() => { void cache.invalidateQueries() }), [cache])
+  const projects = useProjects()
+  const client = useMemo(() => new DashboardConnection(() => { void cache.invalidateQueries() },
+    () => { void cache.invalidateQueries({ queryKey: ['projects'] }, { cancelRefetch: false }) }), [cache])
   const workerMap = useDashboard(state => state.workers)
   const clockOffset = useDashboard(state => state.clockOffset)
   const live = useDashboard(state => state.tasks)
@@ -84,10 +86,11 @@ function Console({ logout }: { logout: () => Promise<void> }) {
   const [page, setPage] = useState<'overview' | 'system'>('overview')
   const [lane, setLane] = useState('')
   const [taskId, setTaskId] = useState<string | undefined>(() => /^\/tasks\/(tsk_[0-9A-HJKMNP-TV-Z]{26})\/?$/.exec(window.location.pathname)?.[1])
-  const [createOpen, setCreateOpen] = useState(false)
+  const [createDefaults, setCreateDefaults] = useState<TaskDefaults>()
+  const [workspaceId, setWorkspaceId] = useState('')
   const [error, setError] = useState('')
   const workers = useMemo(() => Object.values(workerMap).sort((a, b) => a.displayName.localeCompare(b.displayName)), [workerMap])
-  const closeCreate = useCallback(() => setCreateOpen(false), [])
+  const closeCreate = useCallback(() => setCreateDefaults(undefined), [])
   const closeTask = useCallback(() => setTaskId(undefined), [])
   useEffect(() => client.start(), [client])
   useEffect(() => {
@@ -95,7 +98,8 @@ function Console({ logout }: { logout: () => Promise<void> }) {
     return () => clearInterval(timer)
   }, [])
   return <div className="console" data-testid="command-center">
-    <Header create={() => setCreateOpen(true)} approval={() => { setPage('overview'); setLane('approval') }}
+    <Header activeProjects={projects.data?.filter(project => project.activeTasks > 0).length}
+      create={() => setCreateDefaults({})} approval={() => { setPage('overview'); setWorkspaceId(''); setLane('approval') }}
       logout={() => void logout().catch(error => setError(errorText(error)))} />
     {error && <p role="alert" className="error">{error}</p>}
     <nav className="main-tabs" aria-label="指挥台">
@@ -103,11 +107,12 @@ function Console({ logout }: { logout: () => Promise<void> }) {
       <button type="button" aria-current={page === 'system' ? 'page' : undefined} data-testid="system-tab" onClick={() => setPage('system')}>⚙ 系统治理</button>
     </nav>
     <main className="console-body">{page === 'overview' ? <>
-      <WorkerFleet workers={workers} now={time + clockOffset} />
-      <PersonalProject open={setTaskId} />
-      <Pipeline live={live} workers={workers} now={time + clockOffset} lane={lane} setLane={setLane} open={setTaskId} />
-    </> : <SystemPage workers={workers} />}</main>
-    {createOpen && <CreateDialog close={closeCreate} workers={workers} />}
+      <ProjectHub query={projects} workers={workers} workspaceId={workspaceId} filter={setWorkspaceId} open={setTaskId}
+        create={project => setCreateDefaults({ defaultWorkspaceId: project.workspaceId, defaultWorkerId: project.workerId, defaultProfile: 'full' })} />
+      <Pipeline live={live} workers={workers} projects={projects.data ?? []} workspaceId={workspaceId} setWorkspace={setWorkspaceId}
+        now={time + clockOffset} lane={lane} setLane={setLane} open={setTaskId} />
+    </> : <SystemPage workers={workers} now={time + clockOffset} open={setTaskId} />}</main>
+    {createDefaults && <CreateDialog close={closeCreate} workers={workers} {...createDefaults} />}
     {taskId && <MissionDrawer key={taskId} id={taskId} workers={workers} connection={client} close={closeTask} open={setTaskId} />}
   </div>
 }

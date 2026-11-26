@@ -29,6 +29,8 @@ it('starts and pauses a personal project, stops an active run, and exports its c
     const page=await browser.newPage()
     await page.goto(origin);await page.getByTestId('login-token').fill(ADMIN_TOKEN);await page.getByTestId('login-submit').click()
     const panel=page.getByRole('region',{name:'个人项目'})
+    await pw(panel).toHaveCount(0)
+    await page.getByTestId('system-tab').click()
     await panel.getByRole('button',{name:'启动项目'}).click()
     await panel.getByLabel('项目 ID').fill(id)
     await panel.getByLabel('Worker 预检文件').setInputFiles({name:'binding.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({ok:true,binding}))})

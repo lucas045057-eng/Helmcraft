@@ -20,6 +20,7 @@ import { selectWorker } from './scheduler.js'
 import { TimerWheel } from './timer-wheel.js'
 import { reconcileWorker } from './recovery.js'
 import { listTasks, logs, overview } from './queries.js'
+import { listProjects } from './projects.js'
 
 import type { HubConfig } from '../../config/schema.js'
 import { applyVerifyEvent, finishVerification, applyHarnessEvent, harnessView, planHarness, policyFor, toWireDirective, verificationRecord } from './harness.js'
@@ -824,6 +825,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   listTasks(query: TaskListQuery, actor: Actor) { return listTasks(this.db, query, task => this.view(task, actor)) }
   logs(ref: string, id: string, query: LogsQuery) { return logs(this.db, this.requireTask(ref).id, id, query) }
   listWorkers() { return this.ctx.workers.list() }
+  listProjects() { return listProjects(this.db, this.listWorkers()) }
   setWorkerDrain(id: string, drain: boolean, actor: Actor) { return this.ctx.workers.setDrain(id, drain, actor) }
   overview() {
     const view = overview(this.db, this.ctx.workers, this.now(), this.paused, this.localDate)

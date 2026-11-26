@@ -86,6 +86,7 @@ export function apply(ctx: Context, config: DashboardConfig) {
   }
   installDashboardWs(ctx, overview)
   route('GET', '/overview', 'read', overview)
+  route('GET', '/projects', 'read', () => api.ProjectOverview.array().parse(orchestrator.listProjects()))
   route('GET', '/system/metrics', 'admin', () => {
     const view = orchestrator.overview()
     return { workersOnline: view.workersOnline, workersTotal: view.workersTotal, queueLength: view.counts.queued,

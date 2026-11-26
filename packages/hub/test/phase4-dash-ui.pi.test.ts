@@ -17,7 +17,8 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import * as api from '@agent-hub/protocol'
 import type { TaskDetail } from '@agent-hub/protocol'
 import { ChaosProxy, enrollWorker, eventually, delay, openHarness, seedRun } from './pi/harness.js'
-import { expectSchema, rest, useAdminToken } from './pi/rest.js'
+import { expectSchema, onlineWorker, rest, useAdminToken } from './pi/rest.js'
+import { capabilities, dispatch, finish, mockPrompt, owner, snapshot } from './pi/phase7.js'
 import type { TestHub } from '../src/app.js'
 import { startWorker } from '../../worker/src/app.js'
 import { WorkerConfigSchema } from '../../worker/src/config/schema.js'
@@ -148,6 +149,82 @@ it('DASH-1 登录 / 登出 / 会话失效跳转', async () => {
   } finally { await booted.cleanup() }
 }, 180_000)
 
+it('shows the latest nonempty project board and dispatches and filters tasks from that workspace', async () => {
+  const booted = await boot()
+  const { hub } = booted
+  const client = await page(booted.origin)
+  try {
+    const worker = await onlineWorker(hub, 'project-node', { headers: capabilities, workspaces:
+      ['forma', 'daily'].map(id => ({ id, label: id === 'forma' ? 'Soren_project' : id, allowedAdapters: ['mock'],
+        maxProfile: 'full', maxConcurrent: 2, isGitRepo: true })) })
+    const board = snapshot()
+    const content = {
+      'PROJECT_STATE.md': '# PROJECT STATE\n## Summary\nForma 空间化 AI 创作工作台\n## Modules\n| Module | Status |\n| --- | --- |\n| Canvas | wip |',
+      'HANDOFF.md': '## Next\n1. 校验画布导出',
+      'DECISIONS.md': '## Active\n### ADR-1 本地渲染',
+      'LESSONS.md': '## Rules\n- 保留图层顺序',
+    }
+    for (const file of board.files) Object.assign(file, { status: 'present', bytes: Buffer.byteLength(content[file.file]),
+      lines: content[file.file].split('\n').length, content: content[file.file], schemaOk: true, sha256: 'a'.repeat(64) })
+    const makeTask = (workspaceId: string, prompt: string) => hub.ctx.orchestrator.createTask({ workspaceId, prompt, profile: 'edit', adapter: 'mock' }, owner)
+    const first = await makeTask('forma', mockPrompt)
+    const pre = snapshot('old')
+    pre.capturedAt = board.capturedAt - 1
+    await finish(hub, worker, await dispatch(worker, first.id), pre, board)
+    const latest = await makeTask('forma', mockPrompt)
+    const run = await dispatch(worker, latest.id)
+    await finish(hub, worker, run, snapshot(), snapshot())
+    const daily = await makeTask('daily', '日常任务')
+
+    const read = await apiToken(hub, ['read'])
+    const get = (path: string) => rest(hub)('GET', '/api/v1/' + path, { token: read })
+    expect((await rest(hub)('GET', '/api/v1/projects')).status).toBe(401)
+    const projects = expectSchema(api.ProjectOverview.array(), await get('projects'))
+    expect(projects.map(p => p.workspaceId)).toEqual(['forma', 'daily'])
+    expect(projects[0]).toMatchObject({ workerId: 'project-node', latestTaskId: latest.id, latestRunId: run.runId,
+      pointer: { lastAttempt: { runId: run.runId } }, totalTasks: 2, succeededTasks: 2, boardCapturedAt: board.capturedAt })
+    expect(projects[0]!.board?.files.map(f => f.content)).toEqual(board.files.map(f => f.content))
+    expect(projects[1]!.board).toBeNull()
+    expect(expectSchema(api.TaskListResponse, await get('tasks?workspaceId=forma')).items.map(t => t.id)).toEqual([latest.id, first.id])
+
+    await login(client, ADMIN)
+    const center = client.getByTestId('project-hub')
+    const forma = center.getByRole('button', { name: /Soren_project.*Forma/u })
+    await pw(forma).toHaveAttribute('aria-pressed', 'true')
+    await pw(client.getByTestId('worker-fleet')).toHaveCount(0)
+    await pw(center.getByRole('table', { name: '项目模块' }).getByRole('row', { name: 'Canvas wip' })).toBeVisible()
+    await center.getByRole('button', { name: '交接与下一步' }).click()
+    await pw(center.locator('ol li')).toHaveText('校验画布导出')
+    await center.getByRole('button', { name: '架构决策' }).click()
+    await pw(center.getByRole('heading', { name: 'ADR-1 本地渲染' })).toBeVisible()
+    await center.getByRole('button', { name: '踩坑与规则' }).click()
+    await pw(center.getByRole('listitem')).toHaveText('保留图层顺序')
+    await center.getByTestId('project-handoff').click()
+    await pw(client.getByTestId('handoff-submit')).toBeEnabled()
+    await client.getByRole('dialog').getByRole('button', { name: '关闭' }).click()
+
+    const filter = client.getByTestId('task-filter-workspace')
+    await center.getByTestId('project-filter-tasks').click()
+    await pw(filter).toHaveValue('forma')
+    await pw(client.getByTestId('task-card-' + daily.taskNo)).toHaveCount(0)
+    await pw(client.getByTestId('task-card-' + latest.taskNo)).toBeVisible()
+    await filter.selectOption('daily')
+    await pw(center.getByTestId('project-board-tabs')).toHaveCount(0)
+    await pw(client.getByTestId('task-card-' + daily.taskNo)).toBeVisible()
+    await center.getByTestId('project-filter-tasks').click()
+    await pw(filter).toHaveValue('')
+    await forma.click()
+    await center.getByTestId('project-new-task').click()
+    await pw(client.getByTestId('task-workspace')).toHaveValue('forma')
+    await pw(client.getByTestId('task-profile')).toHaveValue('full')
+    await client.getByTestId('task-prompt').fill('项目派单')
+    await client.getByTestId('task-create-submit').click()
+    await pw(client.getByTestId('new-task-dialog')).toBeHidden()
+    expect(hub.ctx.store.repos.tasks.getByNo(daily.taskNo + 1)).toMatchObject({
+      workspaceId: 'forma', profile: 'full', requiredWorkerId: 'project-node', prompt: '项目派单' })
+  } finally { await client.context().close(); await booted.cleanup() }
+}, 60_000)
+
 it('DASH-2 手动指定 Worker 派单：看板卡片 queued → running → succeeded 实时移动', async () => {
   const booted = await boot()
   let worker: Awaited<ReturnType<typeof startMockWorker>> | undefined
@@ -155,7 +232,9 @@ it('DASH-2 手动指定 Worker 派单：看板卡片 queued → running → succ
   try {
     worker = await startMockWorker(booted.hub, 'pi-dash-2', booted.workspace, join(booted.workspace, 'state'))
     await login(client, ADMIN)
+    await client.getByTestId('system-tab').click()
     await pw(client.getByTestId('worker-card-pi-dash-2')).toBeVisible({ timeout: 20_000 })
+    await client.getByTestId('operations-tab').click()
     await client.getByTestId('new-task').click()
     await pw(client.getByTestId('new-task-dialog')).toBeVisible()
     await client.getByTestId('task-worker').selectOption('pi-dash-2')
@@ -326,6 +405,7 @@ it('DASH-6 Worker 断线显示离线 + 宽限期倒计时，恢复后变绿', as
       payload: { prompt: '#scenario: slow ms=120000', workspaceId: 'sandbox', adapter: 'mock', profile: 'edit' } }))
     await waitDetail(booted.hub, token, created.id, task => task.status === 'running', 'running')
     await login(client, ADMIN)
+    await client.getByTestId('system-tab').click()
     const pill = client.getByTestId('worker-card-pi-dash-6').getByTestId('worker-connection')
     const grace = client.getByTestId('worker-card-pi-dash-6').getByTestId('worker-grace')
     await pw(pill).toHaveText('在线', { timeout: 25_000 })
@@ -362,6 +442,7 @@ it('DASH-7 Drain 切换后新任务不派发给该节点', async () => {
     spare = await startMockWorker(booted.hub, 'pi-dash-7b', join(booted.workspace, 'b'), join(booted.workspace, 'state-b'))
     const token = await apiToken(booted.hub)
     await login(client, ADMIN)
+    await client.getByTestId('system-tab').click()
     const toggle = client.getByTestId('worker-card-pi-dash-7a').getByTestId('worker-drain')
     await pw(toggle).toHaveAttribute('aria-checked', 'false', { timeout: 20_000 })
     await toggle.click()

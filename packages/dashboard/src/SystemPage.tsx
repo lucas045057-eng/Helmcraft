@@ -5,6 +5,8 @@ import { ApiTokensResponse, AuditResponse, CreateApiTokenResponse, EnrollTokenRe
   PoliciesResponse, ReplacePoliciesResponse, Scope, WorkerView } from '@agent-hub/protocol'
 import { emptyResponse, errorText, json, request, requestWithHeaders, searchParams } from './api.js'
 import { formatTime } from './format.js'
+import { WorkerFleet } from './WorkerFleet.js'
+import { PersonalProject } from './PersonalProject.js'
 
 function Feedback({ error }: { error: unknown }) {
   return error ? <p className="error" role="alert">{errorText(error)}</p> : null
@@ -147,7 +149,10 @@ function Fibers() {
   </section>
 }
 
-export function SystemPage({ workers }: { workers: WorkerView[] }) {
-  return <div className="system-grid" data-testid="system-page"><Policies /><Workers workers={workers} /><Tokens /><Fibers /><Audit /></div>
+export function SystemPage({ workers, now, open }: { workers: WorkerView[]; now: number; open(id: string): void }) {
+  return <div data-testid="system-page" className="system-page">
+    <WorkerFleet workers={workers} now={now} /><PersonalProject open={open} />
+    <div className="system-grid"><Policies /><Workers workers={workers} /><Tokens /><Fibers /><Audit /></div>
+  </div>
 }
 

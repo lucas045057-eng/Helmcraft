@@ -28,6 +28,16 @@ export const WorkspacePointerView = z.strictObject({
   workerId: WorkerId, workspaceId: WorkspaceId, attemptCounter: z.number().int().nonnegative(),
   lastAccepted: PointerRef.nullable(), lastAttempt: PointerRef.nullable(), updatedAt: z.number().int(),
 })
+export const ProjectOverview = z.strictObject({
+  workerId: WorkerId, workspaceId: WorkspaceId, label: z.string(), isGitRepo: z.boolean(),
+  workerOnline: z.boolean(), maxProfile: Profile, allowedAdapters: z.array(AdapterId),
+  activeTasks: z.number().int().nonnegative(), totalTasks: z.number().int().nonnegative(),
+  succeededTasks: z.number().int().nonnegative(), failedTasks: z.number().int().nonnegative(),
+  lastActiveAt: z.number().int().nullable(), latestTaskId: TaskId.nullable(), latestTaskNo: z.number().int().nullable(),
+  latestRunId: RunId.nullable(), latestAdapter: AdapterId.nullable(), latestVerification: VerificationState.nullable(),
+  pointer: WorkspacePointerView.nullable(), board: BoardSnapshot.nullable(), boardCapturedAt: z.number().int().nullable(),
+})
+export type ProjectOverview = z.infer<typeof ProjectOverview>
 export const RunHarnessView = z.strictObject({
   runId: RunId,
   directive: HarnessDirectiveCore.omit({ facts: true }).nullable(),   // 不能对带 refine 的 HarnessDirective 调用 .omit()

@@ -1,4 +1,4 @@
-import { asc, desc, eq, and, inArray, sql } from 'drizzle-orm'
+import { asc, desc, eq, and, gt, inArray, sql } from 'drizzle-orm'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { TaskRow } from '../../services/store.js'
 import { activeRunStatuses } from '../../services/workers.js'
@@ -29,6 +29,13 @@ export function repositories(db: BetterSQLite3Database<typeof schema>) {
         .where(and(inArray(taskRuns.status, activeRunStatuses), workerId ? eq(taskRuns.workerId, workerId) : undefined)).all(),
     },
     snapshots: {
+      latestForWorkspace: (workerId: string, workspaceId: string) => {
+        const snapshots = schema.runBoardSnapshots
+        return db.select({ snapshot: snapshots.snapshotJson, capturedAt: snapshots.capturedAt })
+          .from(taskRuns).innerJoin(snapshots, eq(snapshots.runId, taskRuns.id))
+          .where(and(eq(taskRuns.workerId, workerId), eq(taskRuns.workspaceId, workspaceId), gt(snapshots.contentBytes, 0)))
+          .orderBy(desc(snapshots.capturedAt), desc(sql`${snapshots.phase} = 'post'`), desc(taskRuns.id)).limit(1).get()
+      },
       forRun: (id: string) => db.select().from(schema.runBoardSnapshots).where(eq(schema.runBoardSnapshots.runId, id)).all(),
     },
     pointers: {

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { AdapterId, ErrorCode, FrameId, RunId, Source, TaskId, WorkerId } from '../common.js'
+import { AdapterId, ErrorCode, FrameId, RunId, Source, TaskId, WorkerId, WorkspaceId } from '../common.js'
 import { PolicyRule, TaskStatus } from '../task.js'
 import { ActorView, LogEntry, Overview, RunView, TaskDetail, TaskSummary, WorkerView } from './dto.js'
 
@@ -65,7 +65,7 @@ export const MetricsResponse = z.record(z.string(), z.json())
 export const FibersResponse = z.array(z.strictObject({ name: z.string(), state: z.string(), error: z.string().optional() }))
 
 export const TaskListQuery = z.strictObject({
-  status: commaList(TaskStatus).optional(), workerId: WorkerId.optional(),
+  status: commaList(TaskStatus).optional(), workerId: WorkerId.optional(), workspaceId: WorkspaceId.optional(),
   adapter: AdapterId.optional(), source: Source.optional(), requesterId: z.string().optional(),
   q: z.string().optional(), parentTaskId: TaskId.optional(), from: unsigned.optional(),
   to: unsigned.optional(), limit: pageLimit(200, 50), cursor: Cursor,

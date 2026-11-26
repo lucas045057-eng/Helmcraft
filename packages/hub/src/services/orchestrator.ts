@@ -1,5 +1,5 @@
 import type { TaskRow } from './store.js'
-import type { PersonalPlanRequest } from '@agent-hub/protocol'
+import type { PersonalPlanRequest, ProjectOverview } from '@agent-hub/protocol'
 import type { AcceptRunRequest, HandoffPreview, HandoffPreviewQuery, HandoffTaskRequest, RunHarnessView, WorkspacePointerView, Actor, ApprovalOverrides, CreateTaskRequest, OverviewView, TaskDetailView, TaskOrigin, TaskView, TaskListQuery, TaskListResponse, LogsQuery, LogsResponse, DeliverResultRequest } from '@agent-hub/protocol'
 export type CreateTaskInput = Pick<CreateTaskRequest, 'prompt' | 'workspaceId'> & Partial<CreateTaskRequest> & { origin?: TaskOrigin }
 export interface CreateOptions { idempotencyKey?: string | undefined; personalPlan?: PersonalPlanRequest; implementProject?: string; gateProject?: string }
@@ -13,6 +13,7 @@ export interface Orchestrator {
   handoffPreview(id: string, actor: Actor, query: HandoffPreviewQuery): HandoffPreview
   runHarness(id: string, runId: string): RunHarnessView
   listWorkspacePointers(): WorkspacePointerView[]
+  listProjects(): ProjectOverview[]
   acceptRun(workerId: string, workspaceId: string, actor: Actor, input: AcceptRunRequest): Promise<WorkspacePointerView>
   setResultSender(send: ResultSender): () => void
   metrics(): { verificationOutcomes: Record<'passed' | 'failed' | 'skipped' | 'unverified', number>; harnessDispatches: number; harnessUnnegotiatedEvents: number; pointerCasRejected: number; staleRunEvents: number; mutexKeys: number; timers: number }

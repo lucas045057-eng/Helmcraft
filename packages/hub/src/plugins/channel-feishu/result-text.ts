@@ -6,7 +6,7 @@ const labels = { failed: '执行失败', timed_out: '执行超时', succeeded: '
 export function resultMessages(task: TaskDetailView, clean: (value: string) => string) {
   const status = task.status
   if (!(status in labels)) return []
-  const heading = '#' + task.taskNo + ' · ' + labels[status as keyof typeof labels]
+  const heading = labels[status as keyof typeof labels]
   const summary = clean(task.resultSummary ?? '')
   const messages = summary.trim() ? splitResult(summary) : []
   if (status === 'failed' || status === 'timed_out') {
