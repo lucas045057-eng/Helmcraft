@@ -9,6 +9,8 @@ export type ParsedCommand =
   | { name: 'status'; taskRef?: TaskRef } | { name: 'tasks'; scope: 'mine' | 'all'; status?: TaskStatus[] }
   | { name: 'workers' } | { name: 'cancel' | 'retry' | 'approve' | 'fix' | 'accept'; taskRef: TaskRef }
   | { name: 'reject'; taskRef: TaskRef; reason?: string } | { name: 'drain'; workerId: string; on: boolean }
+  | { name: 'project'; target?: string } | { name: 'briefing'; target?: string }
+  | { name: 'auto'; action: 'start' | 'status' | 'pause' | 'resume' | 'stop'; dir?: string; doc?: string; push?: boolean; targetId?: string; prompt?: string }
   | { name: 'help' } | { name: 'whoami' }
 
 const usage = {
@@ -24,6 +26,9 @@ const usage = {
   approve: '/approve <taskRef>',
   reject: '/reject <taskRef> [理由]',
   drain: '/drain <workerId> on|off',
+  project: '/project [项目名|clear]',
+  briefing: '/briefing [项目名]',
+  auto: '/auto [status|pause|resume|stop [id]] | [--dir <项目>] [--doc <PRD.md>] [--push] <目标>',
   help: '/help',
   whoami: '/whoami',
 } satisfies Record<ParsedCommand['name'], string>
@@ -176,6 +181,42 @@ function parseTasks(scanner: Scanner): Extract<ParsedCommand, { name: 'tasks' }>
   return { name: 'tasks', scope: scope ?? 'mine', ...(status && { status }) }
 }
 
+function parseAuto(scanner: Scanner): Extract<ParsedCommand, { name: 'auto' }> {
+  if (!scanner.rest()) return { name: 'auto', action: 'status' }
+  const saved = scanner.position
+  const first = scanner.token()
+  if (first === 'status' || first === 'pause' || first === 'resume' || first === 'stop') {
+    const targetId = scanner.token()
+    if (targetId && !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/u.test(targetId)) throw new Error('无效项目 ID')
+    scanner.end()
+    return { name: 'auto', action: first, ...(targetId && { targetId }) }
+  }
+  if (first !== 'start') scanner.position = saved
+  let dir: string | undefined, doc: string | undefined, push: boolean | undefined
+  scanner.skipSpace()
+  while (scanner.text.startsWith('--', scanner.position)) {
+    const key = scanner.token(true)!
+    if (key === '--push') {
+      if (push !== undefined) throw new Error('选项重复')
+      push = true
+    } else if (key === '--dir') {
+      if (dir !== undefined) throw new Error('选项重复')
+      const value = scanner.flagValue()
+      if (!ProjectDir.test(value)) throw new Error('无效项目文件夹')
+      dir = value
+    } else if (key === '--doc') {
+      if (doc !== undefined) throw new Error('选项重复')
+      const value = scanner.flagValue()
+      if (!/^[\p{L}\p{N}_-][\p{L}\p{N}_. -]*\.md$/iu.test(value) || value.toLowerCase() === 'tasks.md') throw new Error('无效需求文档名')
+      doc = value
+    } else throw new Error('未知选项')
+    scanner.skipSpace()
+  }
+  const prompt = scanner.rest()
+  if (!prompt && !doc) throw new Error('需要目标描述或 --doc')
+  return { name: 'auto', action: 'start', ...(dir && { dir }), ...(doc && { doc }), ...(push && { push }), ...(prompt && { prompt }) }
+}
+
 export type CommandParseResult = { ok: true; cmd: ParsedCommand } | { ok: false; error: string; usage: string }
 
 export function canUseCommand(
@@ -183,6 +224,7 @@ export function canUseCommand(
   options: { allowGroupCommands?: boolean; allowRequesterCommands?: boolean; allowRequesterHandoff?: boolean } = {},
 ): boolean {
   if (command.name === 'whoami') return chatType === 'p2p'
+  if (command.name === 'auto') return role === 'owner'
   const privileged = role === 'owner' || (role === 'requester' && options.allowRequesterCommands === true)
   if (command.name === 'fix' || command.name === 'accept' || command.name === 'handoff' || (command.name === 'run' && command.flags.from)) {
     return privileged && (role === 'owner' || options.allowRequesterHandoff === true) && (chatType === 'p2p' || options.allowGroupCommands === true)
@@ -194,11 +236,19 @@ export function canUseCommand(
     case 'reject':
     case 'retry':
     case 'drain':
+    case 'briefing':
     case 'workers': return false
     case 'tasks': return command.scope === 'mine'
     case 'run': return command.flags.worker === undefined && command.flags.priority === undefined && command.flags.profile !== 'full'
     default: return true
   }
+}
+
+const isValidProjectTarget = (value: string): boolean => {
+  if (ProjectDir.test(value)) return true
+  const slash = value.indexOf('/')
+  if (slash <= 0 || value.indexOf('/', slash + 1) !== -1) return false
+  return WorkspaceId.safeParse(value.slice(0, slash).toLowerCase()).success && ProjectDir.test(value.slice(slash + 1))
 }
 
 export function parseCommand(text: string): CommandParseResult {
@@ -212,6 +262,19 @@ export function parseCommand(text: string): CommandParseResult {
       case 'handoff':
       case 'run': return { ok: true, cmd: parseRun(scanner, name) }
       case 'tasks': return { ok: true, cmd: parseTasks(scanner) }
+      case 'auto': return { ok: true, cmd: parseAuto(scanner) }
+      case 'project': {
+        const target = scanner.token()
+        if (target !== undefined && target !== 'clear' && !isValidProjectTarget(target)) throw new Error('无效项目文件夹')
+        scanner.end()
+        return { ok: true, cmd: { name, ...(target && { target }) } }
+      }
+      case 'briefing': {
+        const target = scanner.token()
+        if (target !== undefined && !isValidProjectTarget(target)) throw new Error('无效项目文件夹')
+        scanner.end()
+        return { ok: true, cmd: { name, ...(target && { target }) } }
+      }
       case 'help':
       case 'whoami':
       case 'workers':

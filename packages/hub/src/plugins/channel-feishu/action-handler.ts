@@ -1,13 +1,14 @@
 import { KeyedMutex, stableHash } from '@agent-hub/common'
-import { AdapterId, ApprovalOverrides, CardActionValue, MethodSuggestionAction } from '@agent-hub/protocol'
-import type { Actor, TaskDetailView } from '@agent-hub/protocol'
+import { AdapterId, ApprovalOverrides, CardActionValue, MethodSuggestionAction, ProposalCardAction } from '@agent-hub/protocol'
+import type { Actor, Profile, TaskDetailView, TaskOrigin } from '@agent-hub/protocol'
 import type { CardDelivery } from './delivery.js'
 import type { CardActionResponse, FeishuCardActionEvent } from './transport.js'
 import { identity } from './router.js'
 import { HubError } from '../../services/errors.js'
-import type { CreateTaskInput } from '../../services/orchestrator.js'
+import type { CreateTaskInput, InitialArtifact } from '../../services/orchestrator.js'
 import { claimSuggestion, getMethod, releaseSuggestion } from '../orchestrator/methods.js'
-import { renderMethodSuggestionCard } from './cards/index.js'
+import { renderAutopilotProposalCard, renderMethodSuggestionCard } from './cards/index.js'
+import { claimProposal, getProposal, releaseProposal } from './smart-router.js'
 
 const toast = (content: string, type: CardActionResponse['toast']['type'] = 'info'): CardActionResponse => ({ toast: { content, type } })
 const actionKeys = { handoff: 'followup', fix: 'followup', approve: 'approve', reject: 'reject', cancel: 'cancel', retry: 'retry', input_option: 'input',
@@ -25,6 +26,8 @@ export class ActionHandler {
     if (!ctx.store.repos.feishu.recordEvent({ key: 'act:' + event.event_id, receivedAt: ctx.clock.now() })) return toast('已处理')
     const method = MethodSuggestionAction.safeParse(event.action.value)
     if (method.success) return this.handleMethodSuggestion(event, method.data)
+    const proposal = ProposalCardAction.safeParse(event.action.value)
+    if (proposal.success) return this.handleProposalAction(event, proposal.data)
     const parsed = CardActionValue.safeParse(event.action.value)
     if (!parsed.success) return toast('卡片已过期', 'error')
     const { a, t, ver, opt, req } = parsed.data
@@ -129,7 +132,14 @@ export class ActionHandler {
       { actor_json: string; method_id: string; input_json: string } | undefined
     if (!peek) return toast('卡片已过期', 'error')
     const actor = JSON.parse(peek.actor_json) as Actor
-    const input = JSON.parse(peek.input_json) as CreateTaskInput
+    const parsedInput = JSON.parse(peek.input_json) as CreateTaskInput & {
+      _initialArtifacts?: Array<{ kind: InitialArtifact['kind']; label: string; mimeType: string; dataBase64: string; meta?: unknown }>
+    }
+    const { _initialArtifacts, ...input } = parsedInput
+    const initialArtifacts: InitialArtifact[] | undefined = _initialArtifacts?.map(a => ({
+      kind: a.kind, label: a.label, mimeType: a.mimeType, data: Buffer.from(a.dataBase64, 'base64'),
+      ...(a.meta !== undefined && { meta: a.meta }),
+    }))
     const name = ctx.store.tx(db => { try { return getMethod(db, peek.method_id).name } catch { return undefined } })
     const view = (state: Parameters<typeof renderMethodSuggestionCard>[1]) => ({ type: 'raw' as const,
       data: renderMethodSuggestionCard({ id: value.s, name: name ?? '已删除的方法', scenario: '', prompt: input.prompt }, state) })
@@ -138,16 +148,97 @@ export class ActionHandler {
     if (claimed === 'used') return toast('已处理')
     if (claimed === 'expired' || !claimed) return { ...toast('推荐已过期，请重新发送需求', 'error'), card: view('expired') }
     const use = value.a === 'method_use' && name !== undefined
+    let task: TaskDetailView
     try {
-      const task = await ctx.orchestrator.createTask(use ? { ...input, methodId: peek.method_id } : input, actor, use ? { methodVia: 'suggested' } : {})
-      await this.delivery.ensure(task.id)
+      task = await ctx.orchestrator.createTask(use ? { ...input, methodId: peek.method_id } : input, actor, {
+        idempotencyKey: 'msug:' + value.s,
+        ...(use && { methodVia: 'suggested' as const }),
+        ...(initialArtifacts?.length && { initialArtifacts }),
+      })
     } catch (error) {
       ctx.store.tx(db => releaseSuggestion(db, value.s))
       if (!(error instanceof HubError)) throw error
       return toast(error.message, 'error')
     }
+    await this.delivery.ensure(task.id).catch(() => undefined)
     if (value.a === 'method_use' && !use) return { ...toast('方法已被删除，已按原需求创建任务', 'info'), card: view('skipped') }
     return { ...toast(use ? '已按『' + name + '』创建任务' : '已按原需求创建任务', 'success'), card: view(use ? 'used' : 'skipped') }
+  }
+  private async handleProposalAction(event: FeishuCardActionEvent, value: ProposalCardAction): Promise<CardActionResponse> {
+    const { ctx } = this.delivery
+    const now = ctx.clock.now()
+    const stored = getProposal(ctx.store.repos, value.p)
+    if (!stored) return toast('建议卡已过期', 'error')
+    if ((event.context.open_chat_id && event.context.open_chat_id !== stored.chatId) ||
+        !stored.messageId || stored.messageId !== event.context.open_message_id) {
+      return toast('建议卡与当前消息不匹配', 'error')
+    }
+    const id = event.operator.open_id
+    const chatType = stored.payload.chatType === 'p2p' ? 'p2p' : 'group'
+    const role = identity(this.delivery.config, id, event.context.open_chat_id ?? stored.chatId, chatType === 'group')
+    if (role === 'unauthorized') return toast('暂无操作权限', 'error')
+    const actor: Actor = { type: role, id, channel: 'feishu' }
+    const origin: TaskOrigin = { source: 'feishu', feishu: { chatId: stored.chatId, chatType, messageId: stored.messageId ?? event.context.open_message_id } }
+    if (value.a === 'briefing_run') {
+      if (stored.expiresAt < now) return toast('建议卡已过期', 'error')
+      const privileged = role === 'owner' || this.delivery.config.permissions.allowRequesterCommands
+      if (!privileged || (chatType === 'group' && !this.delivery.config.allowGroupCommands && role !== 'owner')) {
+        return toast('仅负责人可操作', 'error')
+      }
+      const idx = value.idx ?? 1
+      const briefingId = String(stored.payload.briefingId ?? '')
+      let task: TaskDetailView
+      try {
+        task = await ctx.orchestrator.dispatchBriefingAction(briefingId, idx, actor, {
+          origin,
+          idempotencyKey: 'brf:' + briefingId + ':' + idx,
+        })
+      } catch (error) {
+        return toast(error instanceof HubError ? error.message : '派发失败', 'error')
+      }
+      await this.delivery.ensure(task.id).catch(() => undefined)
+      return toast(`已派发简报建议 #${idx}（任务 #${task.taskNo}）`, 'success')
+    }
+    if (role !== 'owner' || (stored.actorOpenId && stored.actorOpenId !== id)) return toast('仅发起需求的负责人可确认', 'error')
+    const p = stored.payload as { workspaceId: string; subdir?: string; prompt: string; adapter?: string; profile?: Profile }
+    const render = (state: 'pending' | 'accepted' | 'direct' | 'dismissed' | 'expired') => ({
+      type: 'raw' as const,
+      data: renderAutopilotProposalCard({ id: stored.id, workspaceId: p.workspaceId, ...(p.subdir && { subdir: p.subdir }), prompt: p.prompt, ...(p.adapter && { adapter: p.adapter }) }, state),
+    })
+    const status = value.a === 'proposal_dismiss' ? 'dismissed' : 'accepted'
+    const claimed = ctx.store.tx(db => claimProposal(db, value.p, now, status))
+    if (claimed === 'used') return toast('已处理')
+    if (claimed === 'expired') return { ...toast('建议卡已过期', 'error'), card: render('expired') }
+    if (value.a === 'proposal_dismiss') return { ...toast('已取消', 'info'), card: render('dismissed') }
+    let createdTask: TaskDetailView | undefined
+    let createdProjId: string | undefined
+    try {
+      if (value.a === 'proposal_accept') {
+        const res = await ctx.orchestrator.startAutopilot({
+          projectId: 'aut_' + stored.id.slice(-16).toLowerCase(),
+          workspaceId: p.workspaceId, ...(p.subdir && { subdir: p.subdir }),
+          inlinePrompt: p.prompt, autoCommit: true, autoPush: false, notifyFeishuChatId: stored.chatId, boardSync: true,
+        }, actor, origin)
+        createdTask = res.task
+        createdProjId = res.projectId
+      } else {
+        const defaults = this.delivery.config.chatDefaults[stored.chatId]
+        createdTask = await ctx.orchestrator.createTask({
+          prompt: p.prompt,
+          workspaceId: p.workspaceId,
+          ...(p.subdir && { subdir: p.subdir }),
+          ...(p.adapter && { adapter: p.adapter as AdapterId }),
+          profile: p.profile ?? defaults?.profile ?? this.delivery.config.defaultProfile ?? 'edit',
+          origin,
+        }, actor, { idempotencyKey: 'prp:' + stored.id })
+      }
+    } catch (error) {
+      ctx.store.tx(db => releaseProposal(db, value.p))
+      return toast(error instanceof HubError ? error.message : '执行失败', 'error')
+    }
+    await this.delivery.ensure(createdTask.id).catch(() => undefined)
+    if (createdProjId) return { ...toast(`🚀 已启动自动交付 (${createdProjId})`, 'success'), card: render('accepted') }
+    return { ...toast(`⚡ 已按普通任务执行 #${createdTask.taskNo}`, 'success'), card: render('direct') }
   }
 }
 function option(task: TaskDetailView, request?: string, opt?: string) {

@@ -4,7 +4,10 @@ import type { Context } from 'cordis'
 import { guardAsync } from '../../kernel/safe.js'
 
 export type CardJson = Record<string, unknown>
-export type OutboundMessage = { type: 'text'; text: string } | { type: 'interactive'; card: CardJson }
+export type OutboundMessage =
+  | { type: 'text'; text: string }
+  | { type: 'interactive'; card: CardJson }
+  | { type: 'image'; imageKey: string }
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'failed'
 export type Recipient = { idType: 'chat_id' | 'open_id'; id: string }
 export interface CardActionResponse {
@@ -37,10 +40,14 @@ export interface FeishuTransport {
   replyMessage(messageId: string, msg: OutboundMessage, opts?: { replyInThread?: boolean; uuid?: string }): Promise<{ messageId: string }>
   sendMessage(receive: Recipient, msg: OutboundMessage, opts?: { uuid?: string }): Promise<{ messageId: string }>
   patchCard(messageId: string, card: CardJson): Promise<void>
+  downloadResource?(messageId: string, fileKey: string, type: 'image' | 'file', maxBytes?: number): Promise<{ data: Buffer; mimeType: string }>
+  uploadImage?(data: Buffer, mimeType?: string): Promise<{ imageKey: string }>
 }
 
 function payload(msg: OutboundMessage) {
-  return { msg_type: msg.type, content: JSON.stringify(msg.type === 'text' ? { text: msg.text } : msg.card) }
+  if (msg.type === 'text') return { msg_type: 'text', content: JSON.stringify({ text: msg.text }) }
+  if (msg.type === 'image') return { msg_type: 'image', content: JSON.stringify({ image_key: msg.imageKey }) }
+  return { msg_type: 'interactive', content: JSON.stringify(msg.card) }
 }
 function check(result: { code?: number | undefined; msg?: string | undefined }) {
   if (result.code) throw Object.assign(new Error(result.msg ?? 'Feishu API error'), { code: result.code })
@@ -93,6 +100,30 @@ export function createFeishuTransport(ctx: Context, credentials: { appId: string
     },
     async patchCard(id, card) {
       check(await client.im.message.patch({ path: { message_id: id }, data: { content: JSON.stringify(card) } }))
+    },
+    async downloadResource(messageId, fileKey, type, maxBytes = 10 << 20) {
+      const res = await client.im.messageResource.get({ params: { type }, path: { message_id: messageId, file_key: fileKey } })
+      const stream = res.getReadableStream()
+      const chunks: Buffer[] = []
+      let total = 0
+      for await (const raw of stream) {
+        const chunk = Buffer.isBuffer(raw) ? raw : Buffer.from(raw as Uint8Array)
+        total += chunk.length
+        if (total > maxBytes) {
+          stream.destroy()
+          throw new Error('Resource exceeds size limit')
+        }
+        chunks.push(chunk)
+      }
+      const headers = (res.headers ?? {}) as Record<string, string | string[] | undefined>
+      const ct = headers['content-type']
+      const mimeType = (Array.isArray(ct) ? ct[0] : ct)?.split(';')[0]?.trim() || (type === 'image' ? 'image/png' : 'application/octet-stream')
+      return { data: Buffer.concat(chunks), mimeType }
+    },
+    async uploadImage(data) {
+      const res = await client.im.image.create({ data: { image_type: 'message', image: data } })
+      if (!res?.image_key) throw new Error('Feishu image upload missing image_key')
+      return { imageKey: res.image_key }
     },
   }
 }

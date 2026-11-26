@@ -15,7 +15,7 @@ interface RunBuffer {
 export type OutboxFrame = Extract<WorkerToHubFrame, { type: 'run.events' | 'run.gap' }>
 type Payload<T> = T extends OutboxFrame ? Pick<T, 'type' | 'payload'> : never
 export type SendRunFrame = (frame: Payload<OutboxFrame>) => boolean
-const highPriority = new Set(['started', 'session', 'input_request', 'finished', 'harness', 'workspace', 'verify'])
+const highPriority = new Set(['started', 'session', 'input_request', 'finished', 'harness', 'workspace', 'verify', 'visual'])
 const wireBytes = (event: RunEvent) => Buffer.byteLength(JSON.stringify(event)) + 192
 function fitEvent(event: RunEvent, budget: number): RunEvent {
   if (wireBytes(event) <= budget) return event
@@ -76,6 +76,25 @@ function fitEvent(event: RunEvent, budget: number): RunEvent {
       const truncatedBytes = (event.truncatedBytes ?? 0) + Buffer.byteLength(event.text) - Buffer.byteLength(text)
       return { ...event, text, truncatedBytes }
     }
+    case 'visual': {
+      const copy = structuredClone(event)
+      for (const shot of copy.shots) {
+        delete shot.imageBase64
+        delete shot.mimeType
+      }
+      if (wireBytes(copy) <= budget) return copy
+      for (const shot of copy.shots) {
+        shot.consoleErrors = shot.consoleErrors.map(line => line.slice(0, 120))
+        shot.pageErrors = shot.pageErrors.map(line => line.slice(0, 120))
+      }
+      while (wireBytes(copy) > budget && copy.shots.some(s => s.consoleErrors.length || s.pageErrors.length)) {
+        for (const shot of copy.shots) {
+          if (shot.consoleErrors.length) shot.consoleErrors.pop()
+          else if (shot.pageErrors.length) shot.pageErrors.pop()
+        }
+      }
+      return copy
+    }
     default: return event
   }
 }
@@ -126,7 +145,7 @@ export class RunOutbox {
     const event = fitEvent(original, this.frameBudget())
     const bytes = wireBytes(event)
     beforeSend?.(event)
-    const replayable = original.kind === 'harness' || original.kind === 'workspace' || original.kind === 'verify'
+    const replayable = original.kind === 'harness' || original.kind === 'workspace' || original.kind === 'verify' || original.kind === 'visual'
     this.append(run, event, bytes, replayable ? original : undefined)
     if (highPriority.has(event.kind) || run.unsentEvents === 200 ||
         (run.unsentBytes >= 64 * 1024 && run.unsentBytes - bytes < 64 * 1024)) this.flush()

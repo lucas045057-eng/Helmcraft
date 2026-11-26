@@ -13,7 +13,7 @@ const binding = { workerId: 'personal', workspaceId: 'sandbox', root: '/work/rep
   ref: 'refs/heads/main', destination: hash('remote'), executables: { main: '/main', reviewer: '/review', advisor: '/advice' } }
 function ready(hub: TestHub) {
   const items = ['ONE','TWO'].map(id => ({ id, title: id, requirements: ['README.md:L1'], acceptanceRefs: ['README.md:L2'], checks: ['core'] }))
-  const summary = JSON.stringify({ items, head: 'a'.repeat(40), tasksDigest: hash('tasks'), sourceDigest: hash('req'), checksDigest: hash('cfg') })
+  const summary = JSON.stringify({ items, head: 'a'.repeat(40), tasksDigest: hash('tasks'), sourceDigest: hash('req'), checksDigest: hash('cfg'), checksDigestVersion: 2 })
   hub.ctx.store.tx(db => {
     recordPlanningTask(db, { binding, projectId: 'p', sources: ['README.md'] }, 'plan', 0)
     recordPlanResult(db,'plan','source-run',{ seq: 1, ts: 1, kind: 'finished', status: 'succeeded', exitCode: 0, signal: null,
@@ -28,7 +28,11 @@ it.each(['passed','missing','failed','quarantined','budget','unbound'])('runs on
   try {
     ready(hub)
     const db = hub.ctx.store.repos
-    worker = await FakeWorker.connect(hub, { workerId: binding.workerId, adapters: [{ ...defaultAdapters[0]!, id: 'codex' }] })
+    worker = await FakeWorker.connect(hub, {
+      workerId: binding.workerId,
+      headers: { 'X-Agent-Hub-Capabilities': 'checks-digest.v2' },
+      adapters: [{ ...defaultAdapters[0]!, id: 'codex' }],
+    })
     const cmd = await worker.waitFor('run.dispatch', 8000)
     hub.ctx.orchestrator.pauseScheduling() // Observe the execution boundary before a T14 role is queued.
     const d = RunDispatch.parse(cmd.payload)

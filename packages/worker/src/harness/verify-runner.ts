@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process'
-import { basename, isAbsolute } from 'node:path'
+import { createHash } from 'node:crypto'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
+import { basename, delimiter, isAbsolute, join } from 'node:path'
 import { stripVTControlCharacters } from 'node:util'
 import { createRedactor, type Clock } from '@agent-hub/common'
 import type { RunEvent, VerificationSummary, VerifyCommandResult } from '@agent-hub/protocol'
-import type { VerifyCommand, Workspace } from '../config/schema.js'
-import { resolveExe } from '../adapters/resolve-exe.js'
+import { FORBIDDEN_SHELL_NAMES, isForbiddenShell, type VerifyCommand, type Workspace } from '../config/schema.js'
+import { resolveExe, resolvedShimPath } from '../adapters/resolve-exe.js'
 import { buildEnvironment } from '../security/env.js'
 import { resolveWorkspaceSubdir } from '../security/workspace.js'
 import { superviseVerification } from './verify-cleanup.js'
@@ -20,8 +22,104 @@ interface Context {
   log(stream: 'stdout' | 'stderr', text: string): void
   emit(event: Omit<Extract<RunEvent, { kind: 'verify' }>, 'seq' | 'ts'>): void
 }
+const MAX_SHELL_IDENTITY_BYTES = 32n * 1024n * 1024n
+let cachedIdentityPathKey: string | undefined
+let cachedShellIdentity: { inodes: Set<string>; hashesBySize: Map<bigint, Set<string>> } | undefined
+
+function buildForbiddenShellIdentity(pathEnv: string) {
+  const inodes = new Set<string>()
+  const hashesBySize = new Map<bigint, Set<string>>()
+  const dirs = new Set(pathEnv.split(delimiter).map(part => part.replace(/^"|"$/g, '')).filter(isAbsolute))
+  const candidates = new Set<string>()
+  if (process.platform === 'win32') {
+    if (process.env.ComSpec && isAbsolute(process.env.ComSpec)) candidates.add(process.env.ComSpec)
+    if (process.env.SystemRoot) {
+      dirs.add(join(process.env.SystemRoot, 'System32'))
+      dirs.add(join(process.env.SystemRoot, 'SysWOW64'))
+      dirs.add(join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0'))
+    }
+    if (process.env.ProgramFiles) dirs.add(join(process.env.ProgramFiles, 'PowerShell', '7'))
+  } else {
+    for (const sysDir of ['/bin', '/usr/bin', '/usr/local/bin', '/sbin', '/usr/sbin']) dirs.add(sysDir)
+  }
+  const exts = process.platform === 'win32' ? ['', '.exe', '.cmd', '.bat', '.com'] : ['']
+  for (const dir of dirs) {
+    for (const name of FORBIDDEN_SHELL_NAMES) {
+      for (const ext of exts) candidates.add(join(dir, name + ext))
+    }
+  }
+  const seenFiles = new Set<string>()
+  const indexFile = (filePath: string) => {
+    try {
+      const real = realpathSync.native(filePath)
+      for (const target of [filePath, real]) {
+        if (seenFiles.has(target)) continue
+        seenFiles.add(target)
+        const st = statSync(target, { bigint: true, throwIfNoEntry: false })
+        if (!st || !st.isFile()) continue
+        inodes.add(`${st.dev}:${st.ino}`)
+        if (st.size > 0n && st.size <= MAX_SHELL_IDENTITY_BYTES) {
+          const digest = createHash('sha256').update(readFileSync(target)).digest('hex')
+          let set = hashesBySize.get(st.size)
+          if (!set) {
+            set = new Set<string>()
+            hashesBySize.set(st.size, set)
+          }
+          set.add(digest)
+        }
+      }
+    } catch { /* ignore inaccessible system candidate */ }
+  }
+  for (const c of candidates) indexFile(c)
+  return { inodes, hashesBySize }
+}
+
+function hostForbiddenShellIdentity() {
+  const pathKey = process.env.PATH ?? ''
+  if (!cachedShellIdentity || cachedIdentityPathKey !== pathKey) {
+    cachedIdentityPathKey = pathKey
+    cachedShellIdentity = buildForbiddenShellIdentity(pathKey)
+  }
+  return cachedShellIdentity
+}
+
+function isForbiddenCandidate(path: string): boolean {
+  if (isForbiddenShell(path)) return true
+  try {
+    const real = realpathSync.native(path)
+    if (isForbiddenShell(real)) return true
+    const st = statSync(real, { bigint: true, throwIfNoEntry: false })
+    if (!st || !st.isFile()) return false
+    const identity = hostForbiddenShellIdentity()
+    if (identity.inodes.has(`${st.dev}:${st.ino}`)) return true
+    const needHash = st.size > 0n && st.size <= MAX_SHELL_IDENTITY_BYTES && identity.hashesBySize.has(st.size)
+    const needPe = process.platform === 'win32' && real.toLowerCase().endsWith('.exe') && st.size > 0n && st.size <= MAX_SHELL_IDENTITY_BYTES
+    if (!needHash && !needPe) return false
+    const buf = readFileSync(real)
+    if (needHash) {
+      const digest = createHash('sha256').update(buf).digest('hex')
+      if (identity.hashesBySize.get(st.size)?.has(digest)) return true
+    }
+    if (needPe && buf.length >= 64 && buf[0] === 0x4d && buf[1] === 0x5a) {
+      const utf16 = buf.toString('utf16le')
+      for (const m of utf16.matchAll(/(?:OriginalFilename|InternalName)\0+([^\0]{1,128})/gu)) {
+        if (m[1] && isForbiddenShell(m[1])) return true
+      }
+    }
+    return false
+  } catch {
+    return false
+  }
+}
 export function resolveVerifyCommand(exe: string) {
-  return isAbsolute(exe) ? resolveExe(basename(exe), { command: exe }) : resolveExe(exe)
+  if (isForbiddenCandidate(exe)) return { status: 'error' as const, error: 'VERIFY_SHELL_FORBIDDEN' }
+  const resolved = isAbsolute(exe) ? resolveExe(basename(exe), { command: exe }) : resolveExe(exe)
+  if (resolved.status !== 'ready') return resolved
+  const shimPath = resolvedShimPath(resolved.exe)
+  if (isForbiddenCandidate(resolved.exe.command) || (shimPath && isForbiddenCandidate(shimPath))) {
+    return { status: 'error' as const, error: 'VERIFY_SHELL_FORBIDDEN' }
+  }
+  return { status: 'ready' as const, exe: resolved.exe, ...(shimPath !== undefined && { shimPath }) }
 }
 async function execute(cmd: VerifyCommand, ctx: Context, deadline: number) {
   const start = ctx.clock.monotonic()

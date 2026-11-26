@@ -23,6 +23,7 @@ export function apply(ctx: Context, initial: Config) {
   let nextVacuum = (Math.floor(metrics.retentionDeletedRowsTotal / 100_000) + 1) * 100_000
   let stopSlice: () => void
   let pending: Promise<unknown> | undefined
+  let backingUp = false
   let completed = ''
   const formatter = (zone: string) => new Intl.DateTimeFormat('sv-SE', { timeZone: zone,
     year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' })
@@ -43,6 +44,7 @@ export function apply(ctx: Context, initial: Config) {
     }
   }
   async function runSlice() {
+    if (backingUp) return
     checkCapacity()
     cleanup(store, clock.now(), config)
     if (metrics.retentionDeletedRowsTotal >= nextVacuum) {
@@ -71,12 +73,21 @@ export function apply(ctx: Context, initial: Config) {
       if (parts.hour !== '04' || completed === date || pending) return
       const directory = config.backupDir ?? (config.dbPath === ':memory:' ? undefined : resolve(dirname(config.dbPath), 'backup'))
       pending = guardAsync(ctx, (async () => {
-        if (await dailyBackup(store.repos, config.dbPath, directory, date)) {
-          const at = clock.now()
-          store.repos.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES ('last_backup_at',?)").run(String(at))
-          metrics.lastBackupAt = at
+        backingUp = true
+        try {
+          await store.artifacts.reconcileAsync(store.repos)
+          const memReader = store.artifacts.root
+            ? undefined
+            : (row: { id: string; storageRelPath: string; bytes: number; sha256: string }) => store.artifacts.readBytes(row as never)
+          if (await dailyBackup(store.repos, config.dbPath, directory, date, store.artifacts.root ?? undefined, memReader)) {
+            const at = clock.now()
+            store.repos.prepare("INSERT OR REPLACE INTO meta(key,value) VALUES ('last_backup_at',?)").run(String(at))
+            metrics.lastBackupAt = at
+          }
+          completed = date
+        } finally {
+          backingUp = false
         }
-        completed = date
       })(), 'daily maintenance').finally(() => { pending = undefined })
     }
     maintain()

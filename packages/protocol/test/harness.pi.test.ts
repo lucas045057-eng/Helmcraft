@@ -129,7 +129,7 @@ it('HP-4 round-trips every harness fixture without injecting defaults', () => {
   // P-1：fixtures/worker/valid 的文件名集合必须仍然是帧类型集合（未新增文件/帧类型，C-1）
   const dir = new URL('../fixtures/worker/valid/', import.meta.url)
   const names = readdirSync(dir).filter(file => file.endsWith('.json')).map(file => file.replace(/\.json$/u, '')).sort()
-  expect(names).toEqual(['cmd.ack', 'hub.challenge', 'hub.heartbeat_ack', 'hub.reject', 'hub.welcome', 'project.release', 'run.ack',
+  expect(names).toEqual(['cmd.ack', 'hub.challenge', 'hub.heartbeat_ack', 'hub.reject', 'hub.welcome', 'project.preflight', 'project.rebaseline', 'project.release', 'run.ack',
     'run.cancel', 'run.dispatch', 'run.events', 'run.gap', 'run.input', 'run.resend', 'worker.bye', 'worker.drain',
     'worker.heartbeat', 'worker.hello', 'worker.probe', 'worker.state'])
   // harness 变体只能出现在 fixtures/harness 下

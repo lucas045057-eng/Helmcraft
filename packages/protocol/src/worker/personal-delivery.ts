@@ -11,6 +11,6 @@ export const PersonalDelivery = z.strictObject({
 export type PersonalDelivery = z.infer<typeof PersonalDelivery>
 export const DeliveryReceipt = z.strictObject({
   kind: DeliveryStep, taskId: z.string(), runId: z.string(), itemId: z.string(),
-  parent: oid, tree: oid, commit: oid, remoteSha: oid.optional(),
+  parent: oid, tree: oid, commit: oid.optional(), remoteSha: oid.optional(),
 })
 export type DeliveryReceipt = z.infer<typeof DeliveryReceipt>

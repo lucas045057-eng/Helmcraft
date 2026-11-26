@@ -68,7 +68,13 @@ export class WorkerTunnel {
     this.retryAfterMs = 0
     this.offset.reset()
     const ws = new WebSocket(this.config.hub.url, WORKER_SUBPROTOCOL, {
-      headers: { 'X-Worker-Id': this.config.workerId, ...(this.config.harness.enabled && { 'X-Agent-Hub-Capabilities': 'blackboard.v1,verify.v1' }) }, maxPayload: 1 << 20, perMessageDeflate: false, handshakeTimeout: 5000,
+      headers: {
+        'X-Worker-Id': this.config.workerId,
+        'X-Agent-Hub-Capabilities': this.config.harness.enabled
+          ? 'attachments.v1,blackboard.v1,checks-digest.v2,preflight.v1,verify.v1,visual.v1'
+          : 'attachments.v1,checks-digest.v2,preflight.v1',
+      },
+      maxPayload: 1 << 20, perMessageDeflate: false, handshakeTimeout: 5000,
     })
     this.ws = ws
     ws.on('error', () => { /* close owns reconnection */ })
@@ -100,7 +106,7 @@ export class WorkerTunnel {
     const frame = HubToWorkerFrame.safeParse(data)
     if (!frame.success) {
       if (this.welcomed && data && typeof data === 'object' && 'type' in data && typeof data.type === 'string' &&
-        ['run.dispatch', 'run.cancel', 'run.input', 'worker.drain', 'worker.probe', 'project.release'].includes(data.type) &&
+        ['run.dispatch', 'run.cancel', 'run.input', 'worker.drain', 'worker.probe', 'project.release', 'project.preflight', 'project.rebaseline'].includes(data.type) &&
         'id' in data && FrameId.safeParse(data.id).success) {
         this.send({ type: 'cmd.ack', payload: { refId: data.id as string, ok: false, error: { code: 'INVALID', message: 'Invalid command' } } })
         return

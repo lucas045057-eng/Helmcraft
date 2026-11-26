@@ -11,6 +11,12 @@ export type ResolveResult =
   | { status: 'missing' }
   | { status: 'error'; error: string }
 
+const shimPaths = new WeakMap<ResolvedExe, string>()
+
+export function resolvedShimPath(exe: ResolvedExe): string | undefined {
+  return shimPaths.get(exe)
+}
+
 const windows = process.platform === 'win32'
 const npmTargets = /"%_prog%"\s+"%(?:dp0%|~dp0)[\\/]([^"%!:\r\n]+\.(?:js|cjs|mjs))"\s+%\*/gim
 const legacyTargets = /(?:"(?:node(?:\.exe)?|%(?:dp0%|~dp0)[\\/]node\.exe)"|node(?:\.exe)?)\s+"%(?:dp0%|~dp0)[\\/]([^"%!:\r\n]+\.(?:js|cjs|mjs))"\s+%\*/gim
@@ -26,8 +32,10 @@ function isFile(path: string, executable = false): boolean {
   }
 }
 
-function ready(command: string, prefixArgs: string[] = []): ResolveResult {
-  return { status: 'ready', exe: { command, prefixArgs } }
+function ready(command: string, prefixArgs: string[] = [], shimPath?: string): ResolveResult {
+  const exe: ResolvedExe = { command, prefixArgs }
+  if (shimPath !== undefined) shimPaths.set(exe, shimPath)
+  return { status: 'ready', exe }
 }
 
 function resolveShim(shim: string): ResolveResult {
@@ -47,9 +55,9 @@ function resolveShim(shim: string): ResolveResult {
     const target = resolve(dir, [...targets][0]!)
     const rel = relative(dir, target)
     if (!rel || rel === '..' || rel.startsWith('..' + sep) || isAbsolute(rel) || !isFile(target)) return error
-    if (extname(target).toLowerCase() === '.exe') return ready(target)
+    if (extname(target).toLowerCase() === '.exe') return ready(target, [], shim)
     const localNode = resolve(dir, 'node.exe')
-    return ready(isFile(localNode) ? localNode : process.execPath, [target])
+    return ready(isFile(localNode) ? localNode : process.execPath, [target], shim)
   } catch {
     return error
   }

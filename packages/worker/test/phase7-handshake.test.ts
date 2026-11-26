@@ -22,7 +22,7 @@ it.each([true,false])('advertises only the implemented capability when enabled=%
       workspaces:[],harness:{enabled}})
     worker=await startWorker(config,{stateDir:dir,identity:{privateKey,publicKey:publicKey.export({type:'spki',format:'der'}).toString('base64'),fingerprint:'test'}})
     const [,request]=await connected
-    expect((request as IncomingMessage).headers['x-agent-hub-capabilities']).toBe(enabled?'blackboard.v1,verify.v1':undefined)
+    expect((request as IncomingMessage).headers['x-agent-hub-capabilities']).toBe(enabled ? 'attachments.v1,blackboard.v1,checks-digest.v2,preflight.v1,verify.v1,visual.v1' : 'attachments.v1,checks-digest.v2,preflight.v1')
   } finally {
     await worker?.close()
     for(const client of ws.clients) client.terminate()

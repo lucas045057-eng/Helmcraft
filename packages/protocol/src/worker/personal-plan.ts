@@ -13,13 +13,16 @@ export const PersonalPlanItem = z.strictObject({
 const items = z.array(PersonalPlanItem).min(1).max(64).refine(rows => new Set(rows.map(row => row.id)).size === rows.length)
 export const PersonalPlan = z.strictObject({ items })
 const digest = z.string().regex(/^[0-9a-f]{64}$/u)
+export const ChecksDigestVersion = z.union([z.literal(1), z.literal(2)])
 export const PersonalPlanReceipt = PersonalPlan.extend({
   head: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u),
   sourceDigest: digest, tasksDigest: digest, checksDigest: digest,
+  checksDigestVersion: ChecksDigestVersion.optional(),
 })
 export type PersonalPlanReceipt = z.infer<typeof PersonalPlanReceipt>
 export const PersonalItemExecution = z.strictObject({
   item: PersonalPlanItem, sources: PlanSources, first: z.boolean(), head: PersonalPlanReceipt.shape.head,
   sourceDigest: digest, tasksDigest: digest, checksDigest: digest,
+  checksDigestVersion: ChecksDigestVersion.optional(),
 })
 export type PersonalItemExecution = z.infer<typeof PersonalItemExecution>

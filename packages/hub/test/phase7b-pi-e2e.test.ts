@@ -20,7 +20,7 @@ const write = (path: string, content: string) => ({ op: 'write', path, content }
 const encode = (ops: unknown[]) => Buffer.from(JSON.stringify(ops)).toString('base64url')
 const scenario = (ops: unknown[], fixes: unknown[] = []) =>
   '#scenario:fs harness=1 ops=' + encode(ops) + ' fixOps=' + encode(fixes)
-const caps = ['blackboard.v1', 'verify.v1']
+const caps = ['attachments.v1', 'blackboard.v1', 'checks-digest.v2', 'preflight.v1', 'verify.v1', 'visual.v1']
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close() })
 

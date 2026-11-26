@@ -3,7 +3,7 @@ import type { BoardSnapshot, HarnessApplied, HarnessDirective, Profile, PromptDi
 import { relative, sep } from 'node:path'
 import type { Workspace } from '../config/schema.js'
 import { scanManifest, diffManifest, type Manifest } from './manifest.js'
-import { sensitivePaths } from './tamper.js'
+import { inspectCommandFiles, sensitivePaths } from './tamper.js'
 import { readBoard } from './board-reader.js'
 
 export interface HarnessSession {
@@ -15,6 +15,7 @@ export interface HarnessSession {
   writerActive: boolean
   manifest?: Manifest
   sensitive?: (path: string) => boolean
+  pinnedPaths?: string[]
   verifyCommandIds?: string[]
   round: number
 }
@@ -41,7 +42,9 @@ export async function capturePost(session: HarnessSession, root: string, localHa
   if (session.manifest && session.sensitive) {
     const current = sensitivePaths(root, localHarness)
     const sensitive = (path: string) => session.sensitive!(path) || current(path)
-    const manifest = await scanManifest(root, localHarness.manifest, sensitive)
+    const postCmd = inspectCommandFiles(root, localHarness)
+    const pinned = [...new Set([...(session.pinnedPaths ?? []), ...postCmd.paths])]
+    const manifest = await scanManifest(root, localHarness.manifest, sensitive, pinned, postCmd.unbaselined)
     Object.assign(event, diffManifest(session.manifest, manifest, sensitive))
   }
   if (profile === 'readonly' && (post || event.changes)) {

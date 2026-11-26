@@ -1,4 +1,5 @@
 import type { repositories } from '../plugins/store-sqlite/repositories.js'
+import type { ArtifactStore } from '../plugins/store-sqlite/artifacts.js'
 import type { Database } from 'better-sqlite3'
 import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3'
 import type { RunEvent, StorageLevel } from '@agent-hub/protocol'
@@ -26,5 +27,6 @@ export interface TaskStore {
   tx<T>(fn: (repos: Repos) => T): T
   readonly repos: Repos
   readonly ingest: LogIngestQueue
+  readonly artifacts: ArtifactStore
   health(): { ok: boolean; walSizeBytes: number; dbSizeBytes: number }
 }

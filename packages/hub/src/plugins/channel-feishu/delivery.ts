@@ -60,8 +60,9 @@ export class CardDelivery {
   }
   async reply(chat: string, message: string, body: OutboundMessage, uuid?: string, stillWanted?: () => boolean) {
     const key = this.privateChats.get(chat) ?? chat
+    const replyInThread = Boolean(this.config.smartRouting?.enabled && this.config.smartRouting.autoReplyInThread)
     try {
-      return await this.sender.send(key, () => this.transport.replyMessage(message, body, uuid ? { uuid } : {}), Boolean(uuid), stillWanted)
+      return await this.sender.send(key, () => this.transport.replyMessage(message, body, { ...(uuid && { uuid }), ...(replyInThread && { replyInThread: true }) }), Boolean(uuid), stillWanted)
     } catch (error) {
       if (!uuid || errorKind(error) !== 'dead') throw error
       return this.sender.send(key, () => this.transport.sendMessage({ idType: 'chat_id', id: chat }, body, { uuid }), true, stillWanted)
@@ -214,6 +215,62 @@ export class CardDelivery {
           const sent = await this.reply(source.chatId, source.messageId, body, stableHash(['result', id]).slice(0, 48))
           if (this.closed) return
           this.bind({ messageId: sent.messageId, taskId: id, role: 'result_text', chatId: source.chatId, chatType: source.chatType, audience, createdAt: this.ctx.clock.now() })
+        }
+      }
+      if (this.transport.uploadImage && terminal(latest.status) && (latest.requester.type === 'owner' || ['not_required', 'delivered'].includes(latest.resultDeliveryStatus))) {
+        const latestRunId = latest.runs[0]?.id
+        const rawVisual = latestRunId
+          ? this.ctx.store.artifacts.listForRun(latestRunId).filter(a => a.kind === 'visual_before' || a.kind === 'visual_after')
+          : []
+        const byRoute = new Map<string, { label: string; routeIndex?: number; before?: (typeof rawVisual)[number]; after?: (typeof rawVisual)[number] }>()
+        for (const a of rawVisual) {
+          let route = a.label
+          let routeIndex: number | undefined
+          if (a.metaJson) {
+            try {
+              const parsed = JSON.parse(a.metaJson) as { route?: unknown; routeIndex?: unknown }
+              if (typeof parsed.route === 'string' && parsed.route) route = parsed.route
+              if (typeof parsed.routeIndex === 'number' && Number.isInteger(parsed.routeIndex) && parsed.routeIndex >= 0) {
+                routeIndex = parsed.routeIndex
+              }
+            } catch { /* ignore */ }
+          }
+          const key = routeIndex !== undefined ? `idx:${routeIndex}` : `route:${route}`
+          const slot = byRoute.get(key) ?? { label: route, ...(routeIndex !== undefined && { routeIndex }) }
+          if (a.kind === 'visual_before' && !slot.before) slot.before = a
+          else if (a.kind === 'visual_after') slot.after = a
+          byRoute.set(key, slot)
+        }
+        const selectedSlots = [...byRoute.values()].slice(0, 2)
+        const labelCounts = new Map<string, number>()
+        for (const s of selectedSlots) labelCounts.set(s.label, (labelCounts.get(s.label) ?? 0) + 1)
+        const slotEntries = selectedSlots.flatMap(slot => {
+          const displayLabel = (labelCounts.get(slot.label) ?? 0) > 1 && slot.routeIndex !== undefined
+            ? `${slot.label} (#${slot.routeIndex + 1})`
+            : slot.label
+          return [
+            ...(slot.before ? [{ art: slot.before, displayLabel }] : []),
+            ...(slot.after ? [{ art: slot.after, displayLabel }] : []),
+          ]
+        })
+        if (slotEntries.length) {
+          const currentBindings = this.ctx.store.repos.feishu.messages(id)
+          const hdrKey = stableHash(['vis_hdr', latestRunId]).slice(0, 48)
+          if (!currentBindings.some(row => row.resultKey === hdrKey)) {
+            const labels = slotEntries.map(e => `${e.art.kind === 'visual_before' ? '改前' : '改后'}(${e.displayLabel})`).join(' / ')
+            const sentHdr = await this.reply(source.chatId, source.messageId, { type: 'text', text: `📸 视觉验收截图（${labels}）` }, hdrKey)
+            this.bind({ messageId: sentHdr.messageId, taskId: id, role: 'result_text', chatId: source.chatId, chatType: source.chatType, resultKey: hdrKey, audience, createdAt: this.ctx.clock.now() })
+          }
+          for (const { art } of slotEntries) {
+            const vKey = stableHash(['vis_img', art.id]).slice(0, 48)
+            if (currentBindings.some(row => row.resultKey === vKey)) continue
+            const buf = this.ctx.store.artifacts.readBytes(art)
+            if (!buf) continue
+            const uploaded = await this.transport.uploadImage(buf, art.mimeType).catch(() => undefined)
+            if (!uploaded || this.closed) continue
+            const sentImg = await this.reply(source.chatId, source.messageId, { type: 'image', imageKey: uploaded.imageKey }, vKey)
+            this.bind({ messageId: sentImg.messageId, taskId: id, role: 'result_text', chatId: source.chatId, chatType: source.chatType, resultKey: vKey, audience, createdAt: this.ctx.clock.now() })
+          }
         }
       }
       this.refresh(id, true)

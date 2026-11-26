@@ -1,4 +1,10 @@
-import { API_PREFIX, ApiError, TaskDetail, HandoffPreview, RunHarnessView, WorkspacePointerView } from '@agent-hub/protocol'
+import {
+  API_PREFIX, ApiError, AutopilotPreflightResponse, PersonalReports,
+  ProjectBriefingView, RunArtifactView, TaskDetail, HandoffPreview, RunHarnessView, WorkspacePointerView,
+} from '@agent-hub/protocol'
+import type {
+  AutopilotPreflightRequest, AutopilotStartRequest, RunBriefingRequest,
+} from '@agent-hub/protocol'
 
 let csrf: string | undefined
 export const setCsrf = (token?: string) => { csrf = token }
@@ -34,7 +40,7 @@ export const json = (method: 'POST' | 'PUT' | 'DELETE', body?: object): RequestI
 export const errorText = (error: unknown) => error instanceof Error ? error.message : '操作失败'
 export function searchParams(values: Record<string, string | undefined>) {
   const params = new URLSearchParams()
-  for (const [key, value] of Object.entries(values)) if (value) params.set(key, value)
+  for (const [key, value] of Object.entries(values)) if (value !== undefined) params.set(key, value)
   return '?' + params.toString()
 }
 
@@ -51,4 +57,31 @@ export function runHarness(ref: string, runId: string, signal?: AbortSignal) {
 export function listWorkspacePointers() { return request('/workspaces', WorkspacePointerView.array()) }
 export function acceptWorkspaceRun(worker: string, workspace: string, input: import('@agent-hub/protocol').AcceptRunRequest) {
   return request('/workspaces/' + encodeURIComponent(worker) + '/' + encodeURIComponent(workspace) + '/accept', WorkspacePointerView, json('POST', input))
+}
+export function listRunArtifacts(ref: string, runId: string, signal?: AbortSignal) {
+  return request('/tasks/' + encodeURIComponent(ref) + '/runs/' + encodeURIComponent(runId) + '/artifacts', RunArtifactView.array(), { signal: signal ?? null })
+}
+export function preflightProject(input: AutopilotPreflightRequest) {
+  return request('/personal/preflight', AutopilotPreflightResponse, json('POST', input))
+}
+export function startAutopilot(input: AutopilotStartRequest) {
+  return request('/personal/autopilot', {
+    parse(value: unknown) {
+      const obj = value as { projectId?: unknown; task?: unknown }
+      if (!obj || typeof obj.projectId !== 'string') throw new Error('Invalid autopilot response')
+      return { projectId: obj.projectId, task: TaskDetail.parse(obj.task) }
+    },
+  }, json('POST', input))
+}
+export function personalReports(id: string) {
+  return request('/personal/projects/' + encodeURIComponent(id) + '/reports', PersonalReports)
+}
+export function listBriefings(query: { workerId?: string; workspaceId?: string; subdir?: string; limit?: string } = {}, signal?: AbortSignal) {
+  return request('/briefings' + searchParams(query), ProjectBriefingView.array(), { signal: signal ?? null })
+}
+export function runBriefing(input: RunBriefingRequest = {}) {
+  return request('/briefings/run', ProjectBriefingView.array(), json('POST', input))
+}
+export function dispatchBriefingAction(briefingId: string, index: number) {
+  return request('/briefings/' + encodeURIComponent(briefingId) + '/actions/' + index + '/dispatch', TaskDetail, json('POST', {}))
 }

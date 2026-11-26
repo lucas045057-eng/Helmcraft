@@ -193,10 +193,16 @@ it('backs up committed WAL data at local 04:00 and rotates only dated snapshots'
   const clock = new FakeClock(Date.parse('2026-01-14T19:59:00Z'))
   const dir = mkdtempSync(join(tmpdir(), 'hub-daily-')), backup = join(dir, 'backup')
   mkdirSync(backup)
-  for (let i = 1; i <= 8; i++) writeFileSync(join(backup, 'hub-2026-01-0' + i + '.sqlite'), '')
   writeFileSync(join(backup, 'hub.sqlite.bak-0-prev'), '')
   const hub = await createTestHub({ storage: { path: join(dir, 'hub.sqlite') }, server: { timezone: 'Asia/Shanghai' } }, { listen: false, clock })
   try {
+    const storeId = hub.ctx.store.repos.prepare("SELECT value FROM meta WHERE key='artifacts_store_id'").pluck().get() as string
+    for (let i = 1; i <= 8; i++) {
+      const stub = new Database(join(backup, 'hub-2026-01-0' + i + '.sqlite'))
+      stub.exec('CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT); CREATE TABLE run_artifacts(id TEXT PRIMARY KEY, storage_rel_path TEXT, bytes INTEGER, sha256 TEXT);')
+      stub.prepare("INSERT INTO meta(key, value) VALUES ('artifacts_store_id', ?)").run(storeId)
+      stub.close()
+    }
     hub.ctx.store.repos.prepare("INSERT INTO meta VALUES ('test-backup','latest')").run()
     clock.advance(59_999)
     expect(hub.ctx.store.retention.lastBackupAt).toBeNull()

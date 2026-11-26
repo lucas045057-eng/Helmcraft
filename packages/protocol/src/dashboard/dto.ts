@@ -3,7 +3,7 @@ import { RunHarnessSummary } from './harness.js'
 import { Capability } from '../worker/capabilities.js'
 import { VerificationState } from '../harness/enums.js'
 import { z } from 'zod'
-import { ResultDeliveryStatus, TaskAction, RunId, TaskId } from '../common.js'
+import { ArtifactId, ResultDeliveryStatus, TaskAction, RunId, TaskId } from '../common.js'
 import { TaskStatus, RunStatus } from '../task.js'
 import { AdapterCapability, WorkspaceDecl } from '../worker/handshake.js'
 export const ActorView = z.strictObject({
@@ -71,11 +71,26 @@ export const TaskDetail = TaskSummary.extend({
 
 export const LogEntry = z.strictObject({
   seq: z.number().int(), ts: z.number().int(),
-  kind: z.enum(['started', 'log', 'agent', 'session', 'progress', 'input_request', 'dropped', 'gap', 'finished', 'system', 'harness', 'workspace', 'verify']),
+  kind: z.enum(['started', 'log', 'agent', 'session', 'progress', 'input_request', 'dropped', 'gap', 'finished', 'system', 'harness', 'workspace', 'verify', 'visual']),
   stream: z.enum(['stdout', 'stderr', 'system']).nullable(),
   text: z.string().nullable(),
   data: z.json(),              // agent 事件、finished 详情、gap 区间等
 })
+
+export const RunArtifactView = z.strictObject({
+  id: ArtifactId,
+  taskId: TaskId,
+  runId: RunId.nullable(),
+  kind: z.enum(['visual_before', 'visual_after', 'inbound_image', 'inbound_audio', 'inbound_file']),
+  label: z.string(),
+  mimeType: z.string(),
+  bytes: z.number().int().nonnegative(),
+  sha256: z.string(),
+  meta: z.json().nullable(),
+  createdAt: z.number().int(),
+  url: z.string(),
+})
+export type RunArtifactView = z.infer<typeof RunArtifactView>
 
 export const WorkerView = z.strictObject({
   protocolCapabilities: z.array(Capability).max(16).optional(),

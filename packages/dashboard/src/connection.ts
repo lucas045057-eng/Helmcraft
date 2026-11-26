@@ -17,7 +17,11 @@ export class DashboardConnection {
   private synchronized = false
   private active = false
   private attempts = 0
-  constructor(private readonly resync: () => void, private readonly projectsChanged: () => void) {}
+  constructor(
+    private readonly resync: () => void,
+    private readonly projectsChanged: () => void,
+    private readonly artifactsChanged?: (target: { taskId: string; runId?: string }) => void,
+  ) {}
 
   start() {
     this.active = true
@@ -120,6 +124,8 @@ export class DashboardConnection {
           state.event(frame)
           if (['task.created', 'task.updated', 'run.updated', 'workspace.updated', 'worker.updated', 'worker.removed'].includes(frame.type))
             this.projectsChanged()
+          if (frame.type === 'run.updated') this.artifactsChanged?.({ taskId: frame.data.taskId, runId: frame.data.id })
+          else if (frame.type === 'task.updated') this.artifactsChanged?.({ taskId: frame.data.id })
           break
         case 'logs':
           if (this.follow?.id === frame.runId) this.follow.buffer.append(frame.entries)

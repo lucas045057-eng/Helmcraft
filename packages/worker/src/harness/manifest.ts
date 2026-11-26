@@ -11,11 +11,39 @@ import { compileGlob, manifestKey } from './glob.js'
 const excluded = new Set('.git node_modules .pnpm-store dist build out coverage .next .nuxt .turbo .cache .venv venv __pycache__ target .idea .vs'.split(' '))
 type Entry = { path: string; size: number; mtimeMs: number; sha256?: string; target?: string; linkIdentity?: string }
 export interface Manifest { summary: ManifestSummary; entries: Map<string, Entry> }
-export async function scanManifest(root: string, config: Workspace['harness']['manifest'], sensitive: (path: string) => boolean): Promise<Manifest> {
+export async function scanManifest(
+  root: string,
+  config: Workspace['harness']['manifest'],
+  sensitive: (path: string) => boolean,
+  pinnedPaths: readonly string[] = [],
+  unbaselined = false,
+): Promise<Manifest> {
   const start = performance.now()
   const entries = new Map<string, Entry>()
-  const summary = { files: 0, bytes: 0, hashed: 0, links: 0, truncated: false, durationMs: 0 }
+  const summary = { files: 0, bytes: 0, hashed: 0, links: 0, truncated: unbaselined, durationMs: 0 }
   const ignores = config.exclude.map(p => compileGlob(p))
+  const hashRegularFile = async (full: string, stat: Awaited<ReturnType<typeof lstat>>, entry: Entry): Promise<boolean> => {
+    const handle = await open(full, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+    try {
+      const initial = await handle.stat({ bigint: true })
+      if (initial.ino !== stat.ino || initial.dev !== stat.dev || !initial.isFile() || initial.size !== stat.size ||
+          manifestKey(await realpath(full)) !== manifestKey(full)) { summary.truncated = true; return false }
+      const hash = createHash('sha256')
+      const buffer = Buffer.allocUnsafe(Math.min(65536, entry.size))
+      let bytes = 0
+      while (bytes < entry.size) {
+        if (performance.now() - start > config.maxScanMs) { summary.truncated = true; return false }
+        const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, entry.size - bytes), bytes)
+        if (!bytesRead) break
+        hash.update(buffer.subarray(0, bytesRead))
+        bytes += bytesRead
+      }
+      if (bytes !== entry.size || (await handle.stat({ bigint: true })).ctimeNs !== initial.ctimeNs) { summary.truncated = true; return false }
+      entry.sha256 = hash.digest('hex')
+      summary.hashed++
+      return true
+    } finally { await handle.close() }
+  }
   const dirs = ['']
   try {
     scan: while (dirs.length) {
@@ -41,25 +69,7 @@ export async function scanManifest(root: string, config: Workspace['harness']['m
           summary.links++
         } else {
           if (entry.size <= 8 * 1024 * 1024 && sensitive(path)) {
-            const handle = await open(full, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
-            try {
-              const initial = await handle.stat({ bigint: true })
-              if (initial.ino !== stat.ino || initial.dev !== stat.dev || !initial.isFile() || initial.size !== stat.size ||
-                  manifestKey(await realpath(full)) !== manifestKey(full)) { summary.truncated = true; break scan }
-              const hash = createHash('sha256')
-              const buffer = Buffer.allocUnsafe(Math.min(65536, entry.size))
-              let bytes = 0
-              while (bytes < entry.size) {
-                if (performance.now() - start > config.maxScanMs) { summary.truncated = true; break scan }
-                const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, entry.size - bytes), bytes)
-                if (!bytesRead) break
-                hash.update(buffer.subarray(0, bytesRead))
-                bytes += bytesRead
-              }
-              if (bytes !== entry.size || (await handle.stat({ bigint: true })).ctimeNs !== initial.ctimeNs) { summary.truncated = true; break scan }
-              entry.sha256 = hash.digest('hex')
-              summary.hashed++
-            } finally { await handle.close() }
+            if (!(await hashRegularFile(full, stat, entry))) break scan
           }
           summary.files++
           summary.bytes += entry.size
@@ -68,6 +78,54 @@ export async function scanManifest(root: string, config: Workspace['harness']['m
       }
     }
   } catch { summary.truncated = true }
+  for (const rel of pinnedPaths) {
+    const key = manifestKey(rel)
+    const existing = entries.get(key)
+    if (existing) {
+      if (existing.target === undefined && !existing.sha256) {
+        summary.truncated = true
+      }
+      continue
+    }
+    const full = resolve(root, rel)
+    if (!withinWorkspace(root, full) || rel.length > 512) { summary.truncated = true; continue }
+    try {
+      const parentDir = dirname(full)
+      const parentStat = await lstat(parentDir).catch((e: NodeJS.ErrnoException) => {
+        if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return null
+        throw e
+      })
+      if (parentStat === null) continue
+      if (manifestKey(await realpath(parentDir)) !== manifestKey(parentDir)) { summary.truncated = true; continue }
+      const stat = await lstat(full, { bigint: true }).catch((e: NodeJS.ErrnoException) => {
+        if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return null
+        throw e
+      })
+      if (stat === null) continue
+      if (stat.isSymbolicLink()) {
+        if (entries.size >= config.maxFiles) { summary.truncated = true; continue }
+        const target = resolve(dirname(full), await readlink(full))
+        entries.set(key, {
+          path: rel,
+          size: Number(stat.size),
+          mtimeMs: Number(stat.mtimeNs) / 1e6,
+          target: withinWorkspace(root, target) ? relative(root, target).split(sep).join('/') : 'OUTSIDE',
+          linkIdentity: createHash('sha256').update(manifestKey(target)).digest('hex'),
+        })
+        summary.links++
+        continue
+      }
+      if (!stat.isFile() || entries.size >= config.maxFiles || Number(stat.size) > 8 * 1024 * 1024) {
+        summary.truncated = true
+        continue
+      }
+      const entry: Entry = { path: rel, size: Number(stat.size), mtimeMs: Number(stat.mtimeNs) / 1e6 }
+      if (!(await hashRegularFile(full, stat, entry))) continue
+      summary.files++
+      summary.bytes += entry.size
+      entries.set(key, entry)
+    } catch { summary.truncated = true }
+  }
   summary.durationMs = Math.floor(performance.now() - start)
   summary.truncated ||= summary.durationMs > config.maxScanMs
   return { entries, summary }

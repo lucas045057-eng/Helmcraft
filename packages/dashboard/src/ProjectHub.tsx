@@ -5,6 +5,9 @@ import type { WorkerView } from '@agent-hub/protocol'
 import { errorText, request } from './api.js'
 import { VerificationBadge } from './harness/VerificationPanel.js'
 import { ProjectBoard, projectHeadline } from './ProjectBoard.js'
+import { AutopilotPanel } from './AutopilotPanel.js'
+import { BriefingPanel } from './BriefingPanel.js'
+import { VisualCompare } from './VisualCompare.js'
 import { useDashboard } from './store.js'
 
 const projectList = ProjectOverview.array()
@@ -45,8 +48,9 @@ interface Actions {
 function ProjectDetail({ project, worker, scope, setScope, create, open }: Actions & {
   project: ProjectOverview; worker: WorkerView | undefined
 }) {
+  const [panelTab, setPanelTab] = useState<'board' | 'visual' | 'autopilot' | 'briefing'>('board')
   const draining = useDashboard(state => state.overview?.hub.draining)
-  const { latestTaskId } = project
+  const { latestTaskId, latestRunId } = project
   const subdir = project.subdir ?? ''
   const scoped = scope.workspaceId === project.workspaceId && scope.subdir === subdir
   // 工作区本身用上方的「工作区」选择切换；卡片上的「只看」只针对工作区里的子项目
@@ -65,9 +69,20 @@ function ProjectDetail({ project, worker, scope, setScope, create, open }: Actio
     <div className="project-context">
       {latestTaskId && <button className="text-button" onClick={() => open(latestTaskId)}>打开最近一次任务 #{project.latestTaskNo}</button>}
     </div>
-    {project.board ? <ProjectBoard board={project.board} /> : <div className="project-facts">
+    <div className="board-tabs war-room-tabs" data-testid="war-room-tabs">
+      <button type="button" aria-pressed={panelTab === 'board'} onClick={() => setPanelTab('board')}>📋 项目黑板</button>
+      <button type="button" aria-pressed={panelTab === 'autopilot'} data-testid="tab-autopilot" onClick={() => setPanelTab('autopilot')}>🚀 自动交付</button>
+      <button type="button" aria-pressed={panelTab === 'visual'} data-testid="tab-visual" onClick={() => setPanelTab('visual')}>📸 视觉验收</button>
+      <button type="button" aria-pressed={panelTab === 'briefing'} data-testid="tab-briefing" onClick={() => setPanelTab('briefing')}>🔍 巡检简报</button>
+    </div>
+    {panelTab === 'board' && (project.board ? <ProjectBoard board={project.board} /> : <div className="project-facts">
       <span>共 {project.totalTasks} 项任务 · 成功 {project.succeededTasks} · 失败 {project.failedTasks}</span><Adapters project={project} />
-    </div>}
+    </div>)}
+    {panelTab === 'autopilot' && <AutopilotPanel project={project} open={open} />}
+    {panelTab === 'visual' && (latestTaskId && latestRunId
+      ? <div className="board-content"><VisualCompare taskId={latestTaskId} runId={latestRunId} showEmpty /></div>
+      : <div className="board-content"><p className="empty-panel">该项目尚无运行记录，运行带 visual 校验的任务后可查看前后对比图。</p></div>)}
+    {panelTab === 'briefing' && <BriefingPanel project={project} open={open} />}
   </article>
 }
 

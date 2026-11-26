@@ -1,4 +1,4 @@
-import { BOARD_HARD_CAP_BYTES, stripBoardContent } from '@agent-hub/protocol'
+import { BOARD_HARD_CAP_BYTES, stripBoardContent, type VisualCheckShot } from '@agent-hub/protocol'
 import type Database from 'better-sqlite3'
 import { boundLogLine, createRedactor, Lru } from '@agent-hub/common'
 import type { Repos, RunGap, StoredEvent, TaskStore, LogIngestQueue } from '../../services/store.js'
@@ -21,7 +21,13 @@ interface Stmts {
   updateGap: Database.Statement<[string, string, number]>
   updateRun: Database.Statement<[number, number, number, number, number | null, string]>
 }
-export interface IngestOptions { batchRows: number; maxQueueRows: number; maxBytesPerRun: number; redactionPatterns: string[] }
+export interface IngestOptions {
+  batchRows: number
+  maxQueueRows: number
+  maxBytesPerRun: number
+  redactionPatterns: string[]
+  saveVisualShot?: (repos: Repos, runId: string, phase: 'before' | 'after', shot: VisualCheckShot, ts: number) => string | undefined
+}
 const maxQueueBytes = 64 << 20
 type Redactor = ReturnType<typeof createRedactor>
 
@@ -130,7 +136,18 @@ export class IngestQueue implements LogIngestQueue {
     for (const source of job.events) {
       if (source.seq <= lastSeq) continue
       if (source.seq !== lastSeq + 1) throw new Error('Non-contiguous run events')
-      const event = this.scrubEvent(job.runId, source)
+      let event = this.scrubEvent(job.runId, source)
+      if (event.kind === 'visual') {
+        const visual = event
+        const shots = visual.shots.map(shot => {
+          if (!shot.imageBase64) return shot
+          const artifactId = this.options.saveVisualShot?.(repos, job.runId, visual.phase, shot, visual.ts)
+          const { imageBase64: _, ...rest } = shot
+          void _
+          return { ...rest, ...(artifactId && { artifactId }) }
+        })
+        event = { ...visual, shots }
+      }
       const { seq, ts, kind, ...data } = stripBoardContent(event)
       const dataJson = event.kind === 'log' ? (event.truncatedBytes ? { truncatedBytes: event.truncatedBytes } : null) : data
       const dataText = dataJson === null ? null : JSON.stringify(dataJson)
@@ -196,7 +213,7 @@ export class IngestQueue implements LogIngestQueue {
     if (Array.isArray(value)) return value.map(item => this.scrub(item, makeRedactor))
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [
       key, typeof item === 'string' && ['kind', 'type', 'status', 'adapter', 'stream', 'reason', 'errorCode', 'requestId', 'cliSessionId',
-        'sha256', 'file', 'dir', 'dirReason', 'phase', 'mode', 'board', 'inject', 'trust', 'runId'].includes(key)
+        'sha256', 'file', 'dir', 'dirReason', 'phase', 'mode', 'board', 'inject', 'trust', 'runId', 'imageBase64'].includes(key)
         ? item : this.scrub(item, makeRedactor),
     ]))
     return value

@@ -1,4 +1,4 @@
-import type { BoardFileDiff, RunHarnessSummary, CardActionValue, TaskDetailView, TaskView, WorkerView } from '@agent-hub/protocol'
+import type { BoardFileDiff, ProjectBriefingView, RunHarnessSummary, CardActionValue, TaskDetailView, TaskView, WorkerView } from '@agent-hub/protocol'
 import type { CardJson } from '../transport.js'
 import { displayText } from './progress.js'
 import type { Audience } from './progress.js'
@@ -221,4 +221,74 @@ export function renderWorkersCard(workers: WorkerView[], limit = 28672): CardJso
 export function renderTaskListCard(tasks: TaskView[], audience: Audience, limit = 28672): CardJson {
   return fit('任务列表', 'blue', [], tasks.length ? tasks.map(t => '#' + t.taskNo + ' · ' + states[t.status][0] + ' · ' +
     displayText(t.title, audience)) : ['暂无任务'], limit)
+}
+
+export function renderAutopilotProposalCard(
+  p: { id: string; workspaceId: string; subdir?: string; prompt: string; adapter?: string },
+  state: 'pending' | 'accepted' | 'direct' | 'dismissed' | 'expired' = 'pending',
+): CardJson {
+  const btn = (a: 'proposal_accept' | 'proposal_direct' | 'proposal_dismiss', label: string, primary = false) => ({
+    tag: 'button',
+    text: plain(label),
+    type: primary ? 'primary' : a === 'proposal_dismiss' ? 'danger' : 'default',
+    behaviors: [{ type: 'callback', value: { v: 1, a, p: p.id } }],
+  })
+  const scope = p.subdir ? `${p.workspaceId}/${p.subdir}` : p.workspaceId
+  const statusText = {
+    pending: '💡 这项改动较大，已为你准备好「规划 → 开发 → 测试 → 审查」自动交付，直接回复“干”或点击下方按钮启动。',
+    accepted: '🚀 已启动三角色自动交付流水线。',
+    direct: '⚡ 已按单次普通任务立即执行。',
+    dismissed: '已取消。',
+    expired: '建议卡已过期，可重新发送需求。',
+  }[state]
+  return fit(
+    `是否启动自动交付 · ${scope}`,
+    state === 'pending' ? 'blue' : 'grey',
+    state === 'pending'
+      ? [{ tag: 'column_set', columns: [
+          { tag: 'column', elements: [btn('proposal_accept', '🚀 启动自动交付', true)] },
+          { tag: 'column', elements: [btn('proposal_direct', '⚡ 直接单次执行')] },
+          { tag: 'column', elements: [btn('proposal_dismiss', '取消')] },
+        ] }]
+      : [],
+    [
+      '目标：' + p.prompt.slice(0, 600),
+      ...(p.adapter ? ['推荐执行器：' + p.adapter] : []),
+      statusText,
+    ],
+    8192,
+  )
+}
+
+export function renderBriefingCard(briefing: ProjectBriefingView, proposalId?: string, audience: Audience = 'owner'): CardJson {
+  const color = briefing.health === 'warning' ? 'red' : briefing.health === 'attention' ? 'orange' : 'green'
+  const label = briefing.subdir ? `${briefing.workspaceId}/${briefing.subdir}` : briefing.workspaceId
+  if (audience === 'requester') {
+    const statusText = briefing.health === 'healthy' ? '项目状态良好' : briefing.health === 'attention' ? '存在待关注事项，请联系负责人处理' : '存在阻塞或失败项，请联系负责人处理'
+    return fit(`📋 项目状态 · ${label}`, color, [], [statusText], 4096)
+  }
+  const fields: string[] = [briefing.summary]
+  for (const f of briefing.findings.slice(0, 5)) {
+    const icon = f.severity === 'error' ? '❌' : f.severity === 'warning' ? '⚠️' : 'ℹ️'
+    fields.push(`${icon} ${f.message}`)
+  }
+  if (briefing.actions.length) {
+    fields.push('推荐下一步（直接回复数字即可执行）：')
+    for (const a of briefing.actions) fields.push(`${a.index}. ${a.title}${a.adapter ? ` [${a.adapter}]` : ''}`)
+  }
+  const actions: object[] = proposalId && briefing.actions.length
+    ? [{
+        tag: 'column_set',
+        columns: briefing.actions.slice(0, 3).map(a => ({
+          tag: 'column',
+          elements: [{
+            tag: 'button',
+            text: plain(`执行 #${a.index}`),
+            type: a.index === 1 ? 'primary' : 'default',
+            behaviors: [{ type: 'callback', value: { v: 1, a: 'briefing_run', p: proposalId, idx: a.index } }],
+          }],
+        })),
+      }]
+    : []
+  return fit(`📋 项目简报 · ${label}`, color, actions, fields, 12_288)
 }

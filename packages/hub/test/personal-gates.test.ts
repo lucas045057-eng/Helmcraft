@@ -20,7 +20,7 @@ async function fixture() {
   await enrollWorker(hub,binding.workerId)
   const db=hub.ctx.store.repos, id='p'
   const item={id:'COUNT',title:'Count objects',requirements:[ref],acceptanceRefs:[ref],checks:['core']}
-  const plan=JSON.stringify({items:[item],head:tip,checksDigest:hash('c'),sourceDigest:hash('s'),tasksDigest:hash('t')})
+  const plan=JSON.stringify({items:[item],head:tip,checksDigest:hash('c'),checksDigestVersion:2,sourceDigest:hash('s'),tasksDigest:hash('t')})
   recordPlanningTask(db,{projectId:id,binding,sources:['REQ.md']},'plan-task',0)
   recordPlanResult(db,'plan-task','plan-run',{kind:'finished',seq:1,ts:1,status:'succeeded',durationMs:100,exitCode:0,signal:null,
     summary:plan,personalResultDigest:hash(plan)},1)

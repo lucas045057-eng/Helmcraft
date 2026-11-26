@@ -7,6 +7,7 @@ import type { AdapterRegistry } from '../adapters/registry.js'
 
 export class Commands {
   private readonly seenCmdIds: Lru<string, CmdAckPayload>
+  private readonly inFlight = new Set<string>()
   constructor(clock: Clock, private readonly runs: RunManager, private readonly adapters: AdapterRegistry,
     private readonly hubNow: () => number, private readonly sendAck: (ack: CmdAckPayload) => void,
     private readonly capabilitiesChanged: () => void) {
@@ -18,6 +19,20 @@ export class Commands {
     const { id, type, payload } = command.data
     const previous = this.seenCmdIds.get(id)
     if (previous) { this.sendAck(previous); return true }
+    if (type === 'project.preflight') {
+      if (this.inFlight.has(id)) return true
+      this.inFlight.add(id)
+      void this.runs.preflightProject(payload).then(
+        preflight => ({ refId: id, ok: true, result: { preflight } } satisfies CmdAckPayload),
+        error => ({ refId: id, ok: false, error: { code: error instanceof WorkerError ? error.code : 'INTERNAL',
+          message: (error instanceof Error ? error.message : 'Preflight failed').slice(0, 500) } } satisfies CmdAckPayload),
+      ).then(asyncAck => {
+        this.inFlight.delete(id)
+        this.seenCmdIds.set(id, asyncAck)
+        this.sendAck(asyncAck)
+      })
+      return true
+    }
     let ack: CmdAckPayload = { refId: id, ok: true }
     let launch: (() => void) | undefined
     try {
@@ -34,6 +49,9 @@ export class Commands {
         case 'project.release':
           this.runs.releaseProject(payload)
           ack.result = {releasedProject:payload.projectId}
+          break
+        case 'project.rebaseline':
+          ack.result = { rebaseline: this.runs.rebaselineProject(payload) }
           break
         case 'worker.probe':
           void this.adapters.probe(payload.adapters).then(this.capabilitiesChanged, () => undefined)

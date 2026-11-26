@@ -1,7 +1,7 @@
 import { z } from 'zod'
 export const CAPABILITY_HEADER = 'x-agent-hub-capabilities' as const       // Node 读取时为小写；Worker 发送 'X-Agent-Hub-Capabilities'
 export const Capability = z.string().regex(/^[a-z][a-z0-9-]{0,31}\.v[1-9]\d{0,2}$/)
-export const KNOWN_CAPABILITIES = ['blackboard.v1', 'verify.v1'] as const
+export const KNOWN_CAPABILITIES = ['attachments.v1', 'blackboard.v1', 'checks-digest.v2', 'preflight.v1', 'verify.v1', 'visual.v1'] as const
 export type Capability = z.infer<typeof Capability>
 export function parseCapabilityHeader(value: string | readonly string[] | undefined): string[] | undefined {
   if (value === undefined) return undefined
@@ -19,6 +19,6 @@ export function parseCapabilityHeader(value: string | readonly string[] | undefi
 }
 export function negotiateCapabilities(offered: readonly string[], supported: readonly string[]): string[] {
   const common = [...new Set(offered)].filter(cap => supported.includes(cap))
-  return common.filter(cap => cap !== 'verify.v1' || common.includes('blackboard.v1')).sort()
+  return common.filter(cap => (cap !== 'verify.v1' && cap !== 'visual.v1') || common.includes('blackboard.v1')).sort()
 }
 export function formatCapabilityHeader(caps: readonly string[]): string { return caps.join(',') }

@@ -2,9 +2,11 @@ import { AdvisorJudgment, DeliveryReceipt, GateReceipt, PersonalBinding, Persona
 import type { Repos } from '../../services/store.js'
 import { HubError } from '../../services/errors.js'
 import { verificationRecord } from './harness.js'
+import { projectOptions } from './personal-execution.js'
 
 type Project = { id:string;phase:string;control:string;reason:string|null;current_item:string|null;last_commit:string|null;
-  binding_json:string;plan_task_id:string;plan_run_id:string|null;plan_json:string|null;active_ms:number;closed_reports:string|null }
+  binding_json:string;plan_task_id:string;plan_run_id:string|null;plan_json:string|null;active_ms:number;closed_reports:string|null;
+  subdir:string|null;mode:string;options_json:string|null;resume_phase?:string|null }
 type Step = {item_id:string;kind:string;task_id:string;run_id:string|null;result_json:string|null;ordinal:number;active_ms:number}
 type Item = {item_id:string;status:string;review_rounds:number;commit_sha:string|null;remote_sha:string|null}
 export function personalProject(db:Repos,id:string) {
@@ -16,8 +18,22 @@ export function projectViews(db:Repos) {
   const rows=db.prepare('SELECT * FROM personal_projects ORDER BY updated_at DESC,rowid DESC LIMIT 50').all() as Project[]
   return rows.map(p=>{
     const step=db.prepare('SELECT task_id,run_id FROM personal_steps WHERE project_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1').get(p.id) as Step|undefined
+    const binding = PersonalBinding.parse(JSON.parse(p.binding_json))
+    const opts = projectOptions(p.options_json)
+    const plan = p.plan_json ? PersonalPlanReceipt.safeParse(JSON.parse(p.plan_json)).data : undefined
+    const itemRows = db.prepare('SELECT item_id,status,review_rounds,commit_sha FROM personal_items WHERE project_id=? ORDER BY ordinal').all(p.id) as Item[]
+    const items = itemRows.map(item => ({
+      id: item.item_id,
+      ...(plan?.items.find(i => i.id === item.item_id)?.title && { title: plan.items.find(i => i.id === item.item_id)!.title }),
+      status: item.status,
+      reviewRounds: item.review_rounds,
+      commitSha: item.commit_sha,
+    }))
     return PersonalProjectView.parse({id:p.id,phase:p.phase,control:p.control,reason:p.reason,currentItem:p.current_item,lastCommit:p.last_commit,
-      taskId:step?.task_id ?? p.plan_task_id,runId:step?.run_id ?? p.plan_run_id,branch:PersonalBinding.parse(JSON.parse(p.binding_json)).branch,activeMs:p.active_ms})
+      taskId:step?.task_id ?? p.plan_task_id,runId:step?.run_id ?? p.plan_run_id,branch:binding.branch,activeMs:p.active_ms,
+      workerId: binding.workerId, workspaceId:binding.workspaceId, subdir:p.subdir ?? binding.subdir ?? null, mode: (p.mode === 'flexible' ? 'flexible' : 'strict'),
+      autoCommit: opts.autoCommit ?? binding.autoCommit ?? true, autoPush: opts.autoPush ?? binding.autoPush ?? (p.mode !== 'flexible'),
+      items})
   })
 }
 
@@ -41,6 +57,12 @@ export function projectReports(db:Repos,id:string,now:number):PersonalReports {
     '规划 Task '+p.plan_task_id+' · Run '+(p.plan_run_id ?? 'unknown'),'','累计活动时间 '+p.active_ms+' ms','')
   let verifiedItems=0,finalChecks=false,finalAdvice=false,adviceCount=0
   const expectedChecks=[...new Set(plan?.items.flatMap(i=>i.checks) ?? [])]
+  const opts = projectOptions(p.options_json)
+  const flexibleNoCommit = p.mode === 'flexible' && (opts.autoCommit === false || binding.autoCommit === false)
+  const flexibleNoPush = p.mode === 'flexible' && (opts.autoPush === false || binding.autoPush === false)
+  const flexibleNoChecks = p.mode === 'flexible' && !!opts.noChecks
+  if (flexibleNoChecks) acceptance.push('验证策略：未配置自动测试命令（灵活模式无验证命令交付）', '')
+  let lastItemCandidate: { head: string; tree: string } | null = null
   for(const item of items) {
     const definition=plan?.items.find(i=>i.id===item.item_id)
     const evidence=steps.filter(s=>s.item_id===item.item_id)
@@ -51,13 +73,15 @@ export function projectReports(db:Repos,id:string,now:number):PersonalReports {
     const tested=evidence.filter(s=>s.kind==='implement'||s.kind==='repair').at(-1)
     const trial=tested?.run_id ? db.runs.get(tested.run_id) : undefined
     const candidate=tested?.result_json ? JSON.parse(tested.result_json).candidate : null
+    if (candidate && item.item_id === items.at(-1)?.item_id) lastItemCandidate = candidate
     const results=trial && verificationRecord(trial).attempts.at(-1)?.results
     const checks=definition?.checks ?? []
+    const checksOk = flexibleNoChecks || (!!results && results.length===checks.length && results.every((r,i)=>r.id===checks[i] && r.status==='passed' && r.exitCode===0))
+    const commitOk = flexibleNoCommit || (!!commit && commit.tree===review?.tree && commit.parent===review?.head && commit.commit===item.commit_sha)
+    const pushOk = flexibleNoCommit || flexibleNoPush || (!!push && push.commit===commit?.commit && push.remoteSha===item.remote_sha && push.remoteSha===commit?.commit)
     const confirmed=item.status==='delivered' && !!review && ReviewJudgment.safeParse(review.judgment).data?.decision==='PASS' &&
       review.runId===last('review')?.run_id && review.tree===candidate?.tree && review.head===candidate?.head &&
-      !!commit && commit.tree===review.tree && commit.parent===review.head && commit.commit===item.commit_sha &&
-      !!push && push.commit===commit.commit && push.remoteSha===item.remote_sha && push.remoteSha===commit.commit &&
-      !!results && results.length===checks.length && results.every((r,i)=>r.id===checks[i] && r.status==='passed' && r.exitCode===0)
+      commitOk && pushOk && checksOk
     for(const finding of ReviewJudgment.safeParse(review?.judgment).data?.findings ?? []) {
       unresolved.push('- '+item.item_id+' · '+finding.kind+' · '+finding.ref+' · '+finding.basis+' · '+finding.impact)
     }
@@ -65,7 +89,7 @@ export function projectReports(db:Repos,id:string,now:number):PersonalReports {
     else unresolved.push('- '+item.item_id+' · '+item.status+' · 交付证据未闭合')
     acceptance.push('- ['+(confirmed?'x':item.status==='failed'?'!':' ')+'] '+item.item_id+' '+(definition?.title ?? ''),
       '  - 需求 '+(definition?.requirements.join('、') ?? 'unknown')+' · 验收 '+(definition?.acceptanceRefs.join('、') ?? 'unknown'),
-      '  - 审查 '+item.review_rounds+' 轮 · commit '+(item.commit_sha ?? 'unknown')+' · 远端 '+(item.remote_sha ?? 'unknown'))
+      '  - 审查 '+item.review_rounds+' 轮 · commit '+(item.commit_sha ?? 'unknown')+' · 远端 '+(item.remote_sha ?? (flexibleNoPush ? '未推送（本地提交模式）' : 'unknown')))
   }
   acceptance.push('','## 执行记录','')
   for(const s of steps) {
@@ -79,8 +103,11 @@ export function projectReports(db:Repos,id:string,now:number):PersonalReports {
       if(s.kind==='verify_final'){
         const core=readReceipt(s.result_json,DeliveryReceipt.parse)
         const checks=attempts.at(-1)?.results ?? []
-        finalChecks=!!core && core.commit===p.last_commit && core.remoteSha===p.last_commit && expectedChecks.length>0 &&
-          checks.length===expectedChecks.length && checks.every((r,i)=>r.id===expectedChecks[i] && r.status==='passed' && r.exitCode===0)
+        const refOk = flexibleNoCommit
+          ? (!!core && !core.commit && !!lastItemCandidate && core.parent===lastItemCandidate.head && core.tree===lastItemCandidate.tree)
+          : (!!core && core.commit===p.last_commit && (flexibleNoPush || core.remoteSha===p.last_commit))
+        finalChecks=refOk &&
+          (flexibleNoChecks || (expectedChecks.length>0 && checks.length===expectedChecks.length && checks.every((r,i)=>r.id===expectedChecks[i] && r.status==='passed' && r.exitCode===0)))
       }
       if(run.status!=='succeeded' && ['commit','push','verify_final'].includes(s.kind)) {
         const log=db.prepare("SELECT text FROM task_logs WHERE run_id=? AND kind='log' AND stream='system' ORDER BY seq DESC LIMIT 1").pluck().get(run.id)
@@ -98,10 +125,15 @@ export function projectReports(db:Repos,id:string,now:number):PersonalReports {
       const advice=AdvisorJudgment.safeParse(receipt?.judgment).data
       advisor.push('- '+[s.item_id,s.kind+' '+s.ordinal,s.task_id,s.run_id ?? 'unknown',advice?.assessment ?? 'unknown'].join(' · '),'  - '+(advice?.advice ?? '未取得有效结论'))
       adviceCount++
-      if(s.kind==='FINAL_READY') finalAdvice=!!receipt && receipt.head===p.last_commit && advice?.assessment==='ok'
+      if(s.kind==='FINAL_READY') {
+        finalAdvice=!!receipt && advice?.assessment==='ok' && (flexibleNoCommit
+          ? (!!lastItemCandidate && receipt.head===lastItemCandidate.head && receipt.tree===lastItemCandidate.tree)
+          : receipt.head===p.last_commit)
+      }
     }
   }
-  const complete=p.phase==='done' && p.control==='closed' && !!plan && verifiedItems===plan.items.length && finalChecks && finalAdvice
+  const finalChecksOk = flexibleNoChecks || finalChecks
+  const complete=p.phase==='done' && p.control==='closed' && !!plan && verifiedItems===plan.items.length && finalChecksOk && finalAdvice
   acceptance.splice(4,0,complete?'结论：已具备人工验收条件。':'结论：未完成。','','最终 SHA '+(p.last_commit ?? 'unknown'),'')
   if(!adviceCount) advisor.push('尚无顾问回执。')
   if(!complete) unresolved.push('- '+p.phase+' · '+(p.reason ?? '尚未完成全部交付、最终检查和顾问判断'))

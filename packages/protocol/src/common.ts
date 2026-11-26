@@ -3,10 +3,16 @@ import { z } from 'zod'
 export const ULID_PATTERN = /^[0-9A-HJKMNP-TV-Z]{26}$/
 export const TASK_ID_PATTERN = /^tsk_[0-9A-HJKMNP-TV-Z]{26}$/
 export const RUN_ID_PATTERN = /^run_[0-9A-HJKMNP-TV-Z]{26}$/
+export const ARTIFACT_ID_PATTERN = /^art_[0-9A-HJKMNP-TV-Z]{26}$/
+export const PROPOSAL_ID_PATTERN = /^prp_[0-9A-HJKMNP-TV-Z]{26}$/
+export const BRIEFING_ID_PATTERN = /^brf_[0-9A-HJKMNP-TV-Z]{26}$/
 export const WORKER_ID_PATTERN = /^[a-z0-9][a-z0-9-]{1,62}$/
 export const FrameId = z.string().regex(ULID_PATTERN)
 export const RunId = z.string().regex(RUN_ID_PATTERN)
 export const TaskId = z.string().regex(TASK_ID_PATTERN)
+export const ArtifactId = z.string().regex(ARTIFACT_ID_PATTERN)
+export const ProposalId = z.string().regex(PROPOSAL_ID_PATTERN)
+export const BriefingId = z.string().regex(BRIEFING_ID_PATTERN)
 export const WorkerId = z.string().regex(WORKER_ID_PATTERN)
 export const WorkspaceId = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/)
 export const TaskRef = z.union([TaskId, z.string().regex(/^#?\d+$/)])
@@ -34,6 +40,9 @@ export type RunIdGenerator = () => RunId
 export type FrameId = z.infer<typeof FrameId>
 export type RunId = z.infer<typeof RunId>
 export type TaskId = z.infer<typeof TaskId>
+export type ArtifactId = z.infer<typeof ArtifactId>
+export type ProposalId = z.infer<typeof ProposalId>
+export type BriefingId = z.infer<typeof BriefingId>
 export type WorkerId = z.infer<typeof WorkerId>
 export type WorkspaceId = z.infer<typeof WorkspaceId>
 export type TaskRef = z.infer<typeof TaskRef>

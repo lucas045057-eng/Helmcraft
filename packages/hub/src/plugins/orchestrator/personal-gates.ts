@@ -31,7 +31,7 @@ function priorEvidence(db: Repos, project: string, item: string) {
   })
 }
 export function prepareGate(db: Repos, id: string) {
-  const {project,item,binding,execution,timeout} = projectExecution(db,id)
+  const {project,item,binding,options,execution,timeout} = projectExecution(db, id, { requireV2: true })
   const route = gates[project.phase as keyof typeof gates]
   if (!route) throw new Error('UNEXPECTED_GATE_PHASE')
   const [kind,active] = route
@@ -40,25 +40,37 @@ export function prepareGate(db: Repos, id: string) {
   if (['PLAN_READY','FINAL_READY','REVIEW_REJECTED_TWICE'].includes(kind) && ordinal !== 1) throw new Error('TRIGGER_ALREADY_RECORDED')
   const delivery = DeliveryStep.safeParse(kind)
   const role = kind === 'review' ? 'reviewer' : kind === 'repair' || kind === 'debug' || delivery.success ? 'main' : 'advisor'
-  const target = personalRoleSettings[role]
+  const baseTarget = personalRoleSettings[role]
+  const target = binding.mode === 'flexible'
+    ? {
+        adapter: binding.adapters?.[role] ?? baseTarget.adapter,
+        profile: role === 'main' ? (kind === 'debug' ? 'readonly' as const : 'edit' as const) : 'readonly' as const,
+        ...(binding.models?.[role] && { model: binding.models[role] }),
+      }
+    : baseTarget
   const limit = Math.min(timeout, (role === 'main' ? 30 : role === 'reviewer' ? 20 : 15) * 60000)
   if (limit < 10000) throw new Error('TIME_BUDGET')
   if (delivery.success) {
     if (ordinal !== 1) throw new Error('DELIVERY_ALREADY_REQUESTED')
     deliveryAction(db,id,delivery.data)
     return {id,kind,active,ordinal,item:item.item_id,role,input:{prompt:'Execute confirmed project step: '+kind,
-      ...target,workspaceId:binding.workspaceId,requiredWorkerId:binding.workerId,timeoutMs:limit}}
+      ...target, ...(binding.subdir && { subdir: binding.subdir }), workspaceId:binding.workspaceId,requiredWorkerId:binding.workerId,timeoutMs:limit}}
   }
   const history = priorEvidence(db,id,item.item_id)
   const request = kind === 'repair' ? 'Implement the minimal repair using these findings and checks. Preserve the fixed plan and requirements. Leave commit and push to delivery.' :
     'Evaluate only the current requirements and complete evidence. Return the requested structured result.'
+  const inlineLines = options.inlinePrompt && execution.sources.includes('INLINE_GOAL.md')
+    ? options.inlinePrompt.split(/\r?\n/u).map((l, i) => `INLINE_GOAL.md:L${i + 1} ${l}`).join('\n')
+    : undefined
   const finalItems = kind === 'FINAL_READY' ? (db.prepare('SELECT item_id,status FROM personal_items WHERE project_id=? ORDER BY ordinal').all(id) as
     {item_id:string;status:string}[]).map(row=>({...row,evidence:priorEvidence(db,id,row.item_id)})) : undefined
   const prompt = [request,JSON.stringify({project:id,item:execution.item,kind,ordinal,head:execution.head,
+    ...(inlineLines && kind === 'repair' && { inlineRequirements: inlineLines }),
+    ...(options.boardContext && kind === 'PLAN_READY' && { boardContext: options.boardContext }),
     history:finalItems ? undefined : history,finalItems})].join('\n')
   if (Buffer.byteLength(prompt) > 80000) throw new Error('ROLE_INPUT_TOO_LARGE')
-  return {id,kind,active,ordinal,item:item.item_id,role,input:{ prompt, adapter:target.adapter,model:target.model,profile:target.profile,
-    workspaceId:binding.workspaceId,requiredWorkerId:binding.workerId,timeoutMs:limit }}
+  return {id,kind,active,ordinal,item:item.item_id,role,input:{ prompt, adapter:target.adapter, ...(target.model && { model: target.model }), profile:target.profile,
+    ...(binding.subdir && { subdir: binding.subdir }), workspaceId:binding.workspaceId,requiredWorkerId:binding.workerId,timeoutMs:limit }}
 }
 
 export function planAdvice(db: Repos, projectId: string) {
@@ -76,14 +88,21 @@ export function beginGate(db: Repos, id: string, taskId: string, now: number) {
 }
 
 export function personalDispatch(db: Repos, step: NonNullable<ReturnType<typeof executionStep>>): NonNullable<RunDispatch['personal']> {
-  const {binding,execution,item} = projectExecution(db,step.project_id)
-  const base = {projectId:step.project_id,binding}
-  if (step.kind === 'implement' || step.kind === 'repair') return {...base,role:'main',execution,...(step.kind === 'repair' && {repair:true as const})}
+  const {binding,options,execution,item,priorTree} = projectExecution(db, step.project_id, { requireV2: true })
+  const extras = {
+    ...(options.inlinePrompt !== undefined && { inlinePrompt: options.inlinePrompt }),
+    ...(options.boardContext !== undefined && { boardContext: options.boardContext }),
+    ...(options.methodBlock !== undefined && { methodBlock: options.methodBlock }),
+    ...(options.noChecks && { noChecks: true as const }),
+  }
+  const base = {projectId:step.project_id,binding,...extras}
+  if (step.kind === 'implement' || step.kind === 'repair') return {...base,role:'main',execution,...(priorTree && { expectedTree: priorTree }),...(step.kind === 'repair' && {repair:true as const})}
   const delivery = DeliveryStep.safeParse(step.kind)
   if (delivery.success) return {...base,role:'main',delivery:deliveryAction(db,step.project_id,delivery.data)}
   const kind = step.kind as PersonalGateKind
+  const includeCandidate = kind === 'review' || (kind === 'FINAL_READY' && binding.mode === 'flexible' && (options.autoCommit === false || binding.autoCommit === false))
   return {...base,role:kind==='review'?'reviewer':kind==='debug'?'main':'advisor',gate:{kind,ordinal:step.ordinal,spec:execution,
-    ...(kind === 'review' && { candidate:TestedCandidate.parse(JSON.parse(item.tested_json ?? 'null')) })}}
+    ...(includeCandidate && { candidate:TestedCandidate.parse(JSON.parse(item.tested_json ?? 'null')) })}}
 }
 
 export function nextGate(kind: Kind, receipt: GateReceipt, counts: {review_rounds:number;rejects:number;unknown_rounds:number}) {
@@ -115,7 +134,7 @@ export function finishGate(db: Repos, run: RunRow, event: Extract<RunEvent,{kind
   const row = db.prepare('SELECT phase,current_item FROM personal_projects WHERE id=?').get(id) as {phase:string;current_item:string}
   if (!stepCanDispatch(step.kind,row.phase) || row.current_item !== itemId) return
   try {
-    const {item,execution,project} = projectExecution(db,id)
+    const {item,binding,options,execution,project} = projectExecution(db,id)
     if (elapsed >= db.tasks.get(run.taskId)!.timeoutMs || project.active_ms >= 86400000 || item.active_ms >= 14400000 || event.durationMs < 0) {
       blockProject(db,id,'TIME_BUDGET',now); return
     }
@@ -132,6 +151,10 @@ export function finishGate(db: Repos, run: RunRow, event: Extract<RunEvent,{kind
       if (review.findings.some(f => f.kind === 'requirement' && ![...execution.item.requirements,...execution.item.acceptanceRefs].includes(f.ref))) throw new Error('Unbound requirement')
       db.prepare('UPDATE personal_items SET review_rounds=review_rounds+1,rejects=rejects+? WHERE project_id=? AND item_id=?').run(Number(review.decision==='REJECT'),id,itemId)
     }
+    if (parsed.kind === 'FINAL_READY' && binding.mode === 'flexible' && (options.autoCommit === false || binding.autoCommit === false)) {
+      const tested = TestedCandidate.parse(JSON.parse(item.tested_json ?? 'null'))
+      if (parsed.head !== tested.head || parsed.tree !== tested.tree) throw new Error('Final candidate mismatch')
+    }
     if (parsed.kind === 'debug') {
       const debug = DebugJudgment.parse(parsed.judgment)
       if (debug.located) {
@@ -147,9 +170,21 @@ export function finishGate(db: Repos, run: RunRow, event: Extract<RunEvent,{kind
     if (phase==='REVIEW_LIMIT' || phase==='ADVISOR_CONCERN') {
       blockProject(db,id,phase,now)
       if (phase==='REVIEW_LIMIT') db.prepare("UPDATE personal_items SET status='failed' WHERE project_id=? AND item_id=?").run(id,itemId)
+    } else if (phase === 'delivery_ready' && binding.mode === 'flexible' && (options.autoCommit === false || binding.autoCommit === false)) {
+      db.prepare("UPDATE personal_items SET status='delivered' WHERE project_id=? AND item_id=?").run(id,itemId)
+      const hasMore = db.prepare("SELECT 1 FROM personal_items WHERE project_id=? AND status!='delivered'").get(id)
+      const nextPhase = hasMore ? 'implementation_ready' : options.noChecks ? 'final_ready' : 'core_ready'
+      db.prepare('UPDATE personal_projects SET phase=?,reason=NULL,updated_at=? WHERE id=?').run(nextPhase,now,id)
     } else {
       db.prepare('UPDATE personal_projects SET phase=?,reason=NULL,updated_at=? WHERE id=?').run(phase,now,id)
       if (phase==='delivery_ready') db.prepare("UPDATE personal_items SET status='reviewed' WHERE project_id=? AND item_id=?").run(id,itemId)
     }
-  } catch { blockProject(db,id,'ROLE_RESULT_UNCONFIRMED',now) }
+  } catch (err) {
+    if (event.status === 'failed' && event.summary === 'CHECKS_REBASELINE_REQUIRED') {
+      blockProject(db, id, 'CHECKS_REBASELINE_REQUIRED', now)
+      return
+    }
+    void err
+    blockProject(db, id, event.status === 'failed' ? (event.errorCode ?? 'RUN_FAILED') : 'ROLE_RESULT_UNCONFIRMED', now)
+  }
 }

@@ -37,7 +37,7 @@ it('starts and pauses a personal project, stops an active run, and exports its c
     await panel.getByRole('button',{name:'开始执行'}).click()
     await panel.getByRole('button',{name:'暂停派发'}).click()
     await pw(panel).toContainText('已暂停派发')
-    worker=await FakeWorker.connect(hub,{workerId:binding.workerId,adapters:[{...defaultAdapters[0]!,id:'codex'}]})
+    worker=await FakeWorker.connect(hub,{workerId:binding.workerId,headers:{'X-Agent-Hub-Capabilities':'checks-digest.v2'},adapters:[{...defaultAdapters[0]!,id:'codex'}]})
     await new Promise(r=>setTimeout(r,1200))
     expect(worker.count('run.dispatch')).toBe(0)
     await panel.getByRole('button',{name:'继续派发'}).click()
@@ -50,7 +50,7 @@ it('starts and pauses a personal project, stops an active run, and exports its c
     const cancel=await worker.waitFor('run.cancel',6000)
     await worker.ackCommand(cancel)
     const summary=JSON.stringify({items:[{id:'ONE',title:'late item',requirements:['PRD.md:L1'],acceptanceRefs:['PRD.md:L1'],checks:['core']}],
-      head:'a'.repeat(40),sourceDigest:'b'.repeat(64),checksDigest:'c'.repeat(64),tasksDigest:'d'.repeat(64)})
+      head:'a'.repeat(40),sourceDigest:'b'.repeat(64),checksDigest:'c'.repeat(64),checksDigestVersion:2,tasksDigest:'d'.repeat(64)})
     const terminal={kind:'finished',seq:1,ts:Date.now(),status:'succeeded',exitCode:0,signal:null,durationMs:5,summary,
       personalResultDigest:createHash('sha256').update(summary).digest('hex')}
     worker.events(d.runId,d.taskId,[terminal])

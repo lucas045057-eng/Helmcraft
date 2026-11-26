@@ -5,7 +5,7 @@ import type { PolicyService } from '../services/policy.js'
 import type { StoredEvent, TaskStore } from '../services/store.js'
 import type { HttpService } from '../services/http.js'
 import type { Clock } from '@agent-hub/common/clock'
-import type { WorkspacePointerView, HubSystemStatus, RunView, TaskTransition, TaskView, WorkerView } from '@agent-hub/protocol'
+import type { WorkspacePointerView, HubSystemStatus, ProjectBriefingView, RunView, TaskTransition, TaskView, WorkerView } from '@agent-hub/protocol'
 import type {} from '../../node_modules/cordis/lib/context.d.ts'
 import type {} from '../../node_modules/cordis/lib/events.d.ts'
 
@@ -39,6 +39,8 @@ declare module '../../node_modules/cordis/lib/events.d.ts' {
     'retention/level'(): void
     'feishu/status'(status: HubSystemStatus['feishu']): void
     'task/result-delivery'(taskId: string): void
+    'personal/phase'(event: { projectId: string; phase: string; prevPhase?: string; currentItem: string | null; reason: string | null; label: string; notifyFeishuChatId?: string }): void
+    'steward/briefing'(briefings: ProjectBriefingView[], notifyFeishu: boolean): void
     'hub/drain'(): Promise<void>
     'hub/config-rejected'(section: string, error: string): void
   }

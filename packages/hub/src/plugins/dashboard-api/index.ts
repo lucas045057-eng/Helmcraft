@@ -14,7 +14,7 @@ import { logEntryEnd } from './log-follow.js'
 import { installDashboardWs } from './ws-hub.js'
 import { listAudit } from './audit.js'
 import { runView, owner } from '../orchestrator/views.js'
-import { controlProject } from '../orchestrator/personal-controls.js'
+import { controlProject, rebaselineProject } from '../orchestrator/personal-controls.js'
 import { projectReports, projectViews } from '../orchestrator/personal-status.js'
 import { addMethodExample, createMethod, deleteMethod, getMethod, listMethods, removeMethodExample, suggestFor, updateMethod } from '../orchestrator/methods.js'
 
@@ -104,9 +104,16 @@ export function apply(ctx: Context, config: DashboardConfig) {
       return res.code(204).send()
     })
   }
+  route('POST', '/personal/projects/:id/rebaseline', 'operate', async (_req, _res, params) =>
+    rebaselineProject(ctx, projectId(params)))
   route('GET','/personal/projects/:id/reports','read',(_req,res,params)=>{
     res.header('Cache-Control','no-store')
     return store.tx(db=>projectReports(db,projectId(params),ctx.clock.now()))
+  })
+  route('POST', '/personal/preflight', 'operate', req => orchestrator.preflightProject(parse(api.AutopilotPreflightRequest, req.body)))
+  route('POST', '/personal/autopilot', 'operate', async (req, res, _params, actor) => {
+    const result = await orchestrator.startAutopilot(parse(api.AutopilotStartRequest, req.body), actor)
+    return res.code(201).send(result)
   })
   route('POST', '/personal/plans', 'operate', async (req, res, _params, actor) => {
     const plan = parse(api.PersonalPlanRequest, req.body)
@@ -140,6 +147,49 @@ export function apply(ctx: Context, config: DashboardConfig) {
   route('GET', '/tasks/:ref/runs/:runId/harness', 'read', (_req, _res, params) => {
     const path = parse(api.RunPath, params)
     return api.RunHarnessView.parse(orchestrator.runHarness(path.ref, path.runId))
+  })
+  route('GET', '/tasks/:ref/runs/:runId/artifacts', 'read', (_req, _res, params) => {
+    const path = parse(api.RunPath, params)
+    return api.RunArtifactView.array().parse(orchestrator.listRunArtifacts(path.ref, path.runId))
+  })
+  route('GET', '/artifacts/:id', 'read', (_req, res, params) => {
+    const id = parse(api.ArtifactId, params.id)
+    const row = store.artifacts.get(id)
+    const data = row && store.artifacts.readBytes(row)
+    if (!row || !data) throw new HubError('TASK_NOT_FOUND', 404, { reason: 'ARTIFACT_NOT_FOUND' })
+    const safeInlineImage = ['image/png', 'image/jpeg', 'image/webp'].includes(row.mimeType)
+    res
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('Content-Security-Policy', "default-src 'none'; sandbox")
+      .header('Cache-Control', 'private, no-store')
+    if (!safeInlineImage) {
+      res.header('Content-Disposition', 'attachment')
+      return res.type('application/octet-stream').send(data)
+    }
+    return res.type(row.mimeType).send(data)
+  })
+  route('GET', '/briefings', 'read', req => {
+    const q = (req.query ?? {}) as Record<string, string | undefined>
+    const workerIdFilter = q.workerId ? parse(api.WorkerId, q.workerId) : undefined
+    const workspaceId = q.workspaceId ? parse(api.WorkspaceId, q.workspaceId) : undefined
+    const limit = q.limit && /^\d+$/.test(q.limit) ? Math.min(50, Number(q.limit)) : 20
+    return api.ProjectBriefingView.array().parse(orchestrator.listBriefings({
+      ...(workerIdFilter && { workerId: workerIdFilter }),
+      ...(workspaceId && { workspaceId }),
+      ...(q.subdir !== undefined && { subdir: q.subdir }),
+      limit,
+    }))
+  })
+  route('POST', '/briefings/run', 'operate', req => {
+    const filter = parse(api.RunBriefingRequest, req.body ?? {})
+    return api.ProjectBriefingView.array().parse(orchestrator.runBriefing('manual', filter))
+  })
+  route('POST', '/briefings/:id/actions/:index/dispatch', 'operate', async (_req, res, params, actor) => {
+    const id = parse(api.BriefingId, params.id)
+    const index = /^\d+$/.test(params.index ?? '') ? Number(params.index) : 0
+    if (index < 1 || index > 10) throw new HubError('VALIDATION_FAILED', 400)
+    const task = await orchestrator.dispatchBriefingAction(id, index, actor)
+    return res.code(201).send(api.TaskDetail.parse(task))
   })
   route('GET', '/workspaces', 'read', () => orchestrator.listWorkspacePointers())
   route('POST', '/workspaces/:workerId/:workspaceId/accept', 'operate', (req, _res, params, actor) =>

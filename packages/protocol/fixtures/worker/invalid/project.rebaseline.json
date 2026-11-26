@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "project.rebaseline",
+  "ts": 1700000000000,
+  "payload": {
+    "projectId": "one",
+    "binding": {
+      "workerId": "worker-1",
+      "workspaceId": "workspace",
+      "root": "/repo",
+      "branch": "main",
+      "remote": "origin",
+      "ref": "refs/heads/main",
+      "destination": "not-a-sha256",
+      "executables": {
+        "main": "codex",
+        "reviewer": "claude",
+        "advisor": "codex"
+      }
+    },
+    "legacyChecksDigest": "not-a-sha256"
+  }
+}

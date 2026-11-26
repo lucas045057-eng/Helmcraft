@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { RunId, TaskId } from '../common.js'
+import { ProposalId, RunId, TaskId } from '../common.js'
 export const CardActionValue = z.strictObject({
   v: z.literal(1),
   a: z.enum(['approve', 'reject', 'cancel', 'retry', 'input_option', 'publish_result', 'suppress_result', 'handoff', 'fix']),
@@ -18,4 +18,13 @@ export const MethodSuggestionAction = z.strictObject({
   a: z.enum(['method_use', 'method_skip']),
   s: z.string().regex(/^mss_[0-9A-HJKMNP-TV-Z]{26}$/),
 })
+/** 推荐确认卡 / 简报行动卡的按钮。 */
+export const ProposalCardAction = z.strictObject({
+  v: z.literal(1),
+  a: z.enum(['proposal_accept', 'proposal_dismiss', 'proposal_direct', 'briefing_run']),
+  p: ProposalId,
+  idx: z.number().int().min(1).max(10).optional(),
+})
+export type ProposalCardAction = z.infer<typeof ProposalCardAction>
+
 export type MethodSuggestionAction = z.infer<typeof MethodSuggestionAction>

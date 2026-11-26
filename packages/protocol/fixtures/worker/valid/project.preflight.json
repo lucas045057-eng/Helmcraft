@@ -1,0 +1,13 @@
+{
+  "v": 1,
+  "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "type": "project.preflight",
+  "ts": 1700000000000,
+  "payload": {
+    "workspaceId": "workspace",
+    "subdir": "Forma",
+    "mode": "flexible",
+    "autoCommit": true,
+    "autoPush": false
+  }
+}

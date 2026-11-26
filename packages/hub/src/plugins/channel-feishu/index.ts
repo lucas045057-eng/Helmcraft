@@ -9,8 +9,10 @@ import type { ConnectionState, FeishuTransport } from './transport.js'
 import { CardDelivery } from './delivery.js'
 import { ActionHandler } from './action-handler.js'
 import { MessageRouter } from './router.js'
+import { renderBriefingCard } from './cards/index.js'
+import { claimProposal, createProposal, setProposalMessageId } from './smart-router.js'
 
-export type ChannelConfig = HubConfig['feishu'] & { permissions: HubConfig['permissions']; appId: string; appSecret: string; maxPromptChars: number; redactionPatterns: string[] }
+export type ChannelConfig = HubConfig['feishu'] & { permissions: HubConfig['permissions']; appId: string; appSecret: string; maxPromptChars: number; redactionPatterns: string[]; stewardNotifyChatIds?: string[] }
 export function channelFeishu(publicUrl: string, injected?: FeishuTransport, hubStatus?: () => { configError: string | null; restartRequired: boolean }) {
   let failed = false
   return { name: 'channel-feishu', inject: ['orchestrator', 'store', 'clock'],
@@ -50,10 +52,50 @@ export function channelFeishu(publicUrl: string, injected?: FeishuTransport, hub
         safeOn(ctx, 'task/transitioned', ({ task }) => sync(task.id))
         safeOn(ctx, 'task/result-delivery', sync)
         safeOn(ctx, 'run/events', (runId, id, events) => delivery.onProgress(id, runId, events))
+        safeOn(ctx, 'personal/phase', async evt => {
+          const targets = evt.notifyFeishuChatId ? [evt.notifyFeishuChatId] : current.autopilot.notifyChatIds
+          if (!targets.length || closed) return
+          const notable = new Set(['plan_ready', 'implementing', 'reviewing', 'blocked', 'done', 'stopped'])
+          if (!notable.has(evt.phase)) return
+          const labels: Record<string, string> = {
+            plan_ready: '📝 规划完成，等待顾问评估',
+            implementing: `🔨 开始实现 ${evt.currentItem ?? ''}`.trim(),
+            reviewing: `🔍 进入代码审查 ${evt.currentItem ?? ''}`.trim(),
+            blocked: `⚠️ 自动交付已阻塞：${evt.reason ?? '需人工查看'}`,
+            done: '✅ 自动交付已完成并生成验收报告！',
+            stopped: '🛑 自动交付已停止',
+          }
+          const msg = `[${evt.label}] ${labels[evt.phase] ?? evt.phase}`
+          for (const chatId of new Set(targets)) {
+            await transport.sendMessage({ idType: 'chat_id', id: chatId }, { type: 'text', text: msg }).catch(() => undefined)
+          }
+        })
+        safeOn(ctx, 'steward/briefing', async (briefings, notifyFeishu) => {
+          if (!notifyFeishu || closed) return
+          const chatIds = current.stewardNotifyChatIds?.length
+            ? current.stewardNotifyChatIds
+            : current.autopilot.notifyChatIds.length
+              ? current.autopilot.notifyChatIds
+              : []
+          const now = ctx.clock.now()
+          for (const b of briefings.slice(0, 5)) {
+            for (const chatId of new Set(chatIds)) {
+              const audience = delivery.groupAudience(chatId)
+              const propId = audience === 'owner' && b.actions.length
+                ? ctx.store.tx(db => createProposal(db, { kind: 'briefing', chatId, actorOpenId: current.ownerOpenIds[0] ?? '', payload: { briefingId: b.id, chatType: 'group' }, now }))
+                : undefined
+              const sent = await transport.sendMessage({ idType: 'chat_id', id: chatId }, { type: 'interactive', card: renderBriefingCard(b, propId, audience) }).catch(() => undefined)
+              if (propId) {
+                if (sent?.messageId) ctx.store.tx(db => setProposalMessageId(db, propId, sent.messageId))
+                else ctx.store.tx(db => claimProposal(db, propId, now, 'dismissed'))
+              }
+            }
+          }
+        })
         router.draining = draining
         drain = async () => { router.draining = true; await delivery.updater.flush() }
         onHotUpdate<ChannelConfig>(ctx, ['card', 'ownerOpenIds', 'requesterAllowlist', 'allowedChatIds', 'requesterPolicy',
-          'permissions', 'deliveryMode', 'groupAudience', 'allowGroupCommands', 'defaultProfile', 'requesterReplyPolicy', 'defaultWorkspaceId', 'methodSuggestions', 'chatDefaults', 'maxPromptChars', 'staleMessageMs', 'redactionPatterns'], next => {
+          'permissions', 'deliveryMode', 'groupAudience', 'allowGroupCommands', 'defaultProfile', 'requesterReplyPolicy', 'defaultWorkspaceId', 'methodSuggestions', 'chatDefaults', 'multimodal', 'smartRouting', 'autopilot', 'stewardNotifyChatIds', 'maxPromptChars', 'staleMessageMs', 'redactionPatterns'], next => {
           current = next
           delivery.config = next
           router.maxChars = next.maxPromptChars

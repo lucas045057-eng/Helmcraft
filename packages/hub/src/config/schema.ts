@@ -64,6 +64,32 @@ export const HubConfigSchema = z.strictObject({
     })).default({}), staleMessageMs: ms(600_000),
     card: z.strictObject({ minPatchIntervalMs: ms(3000), minPatchIntervalHighMs: ms(1000), globalPatchQps: ms(5),
       cardMaxBytes: z.number().int().min(512).max(30 * 1024).default(28 * 1024), cardResultMaxChars: ms(2000) }).prefault({}),
+    multimodal: z.strictObject({
+      enabled: z.boolean().default(false),
+      maxFileBytes: z.number().int().min(1024).max(20 << 20).default(10 << 20),
+      inlineMaxBytes: z.number().int().min(1024).max(550_000).default(512_000),
+      asrUrl: z.url().refine(value => ['http:', 'https:'].includes(new URL(value).protocol), 'Expected HTTP/HTTPS URL').optional(),
+      asrModel: z.string().max(128).default('whisper-1'),
+      asrApiKeyEnv: z.string().regex(/^[A-Z_][A-Z0-9_]{0,63}$/).optional(),
+      asrTimeoutMs: positive.max(60_000).default(20_000),
+    }).prefault({}),
+    smartRouting: z.strictObject({
+      enabled: z.boolean().default(false),
+      autoReplyInThread: z.boolean().default(false),
+      rememberProject: z.boolean().default(true),
+      autoSelectAdapter: z.boolean().default(true),
+      proposeAutopilot: z.boolean().default(true),
+    }).prefault({}),
+    autopilot: z.strictObject({
+      notifyChatIds: z.array(z.string()).default([]),
+    }).prefault({}),
+  }).prefault({}),
+  steward: z.strictObject({
+    enabled: z.boolean().default(false),
+    patrolIntervalMs: z.number().int().min(60_000).max(86_400_000).default(3_600_000),
+    briefingHour: z.number().int().min(0).max(23).default(9),
+    briefingMinute: z.number().int().min(0).max(59).default(0),
+    notifyChatIds: z.array(z.string()).default([]),
   }).prefault({}),
 })
 export type HubConfig = z.output<typeof HubConfigSchema>

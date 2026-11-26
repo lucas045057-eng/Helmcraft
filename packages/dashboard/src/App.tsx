@@ -1,5 +1,5 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { QueryClient, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AuthMeResponse, LoginResponse, TaskDetail } from '@agent-hub/protocol'
 import type { WorkerView } from '@agent-hub/protocol'
 import { emptyResponse, errorText, json, request, sessionExpired, setCsrf } from './api.js'
@@ -75,11 +75,47 @@ function CreateDialog({ close, workers, ...defaults }: TaskDefaults & { close: (
   </div>
 }
 
+const pendingArtifactInvalidations = new WeakMap<QueryClient, Set<string>>()
+
+export function invalidateAfterFetch(cache: QueryClient, queryKey: readonly unknown[]): void {
+  const queries = cache.getQueryCache().findAll({ queryKey })
+  const fetching = queries.filter(q => q.state.fetchStatus === 'fetching')
+  if (!fetching.length) {
+    void cache.invalidateQueries({ queryKey })
+    return
+  }
+  for (const q of queries) {
+    if (q.state.fetchStatus !== 'fetching') {
+      void cache.invalidateQueries({ queryKey: q.queryKey, exact: true })
+    }
+  }
+  let pending = pendingArtifactInvalidations.get(cache)
+  if (!pending) {
+    pending = new Set()
+    pendingArtifactInvalidations.set(cache, pending)
+  }
+  for (const q of fetching) {
+    if (pending.has(q.queryHash)) continue
+    pending.add(q.queryHash)
+    const inflight = q.promise ?? Promise.resolve()
+    const trigger = () => {
+      queueMicrotask(() => {
+        pending.delete(q.queryHash)
+        void cache.invalidateQueries({ queryKey: q.queryKey, exact: true }, { cancelRefetch: false })
+      })
+    }
+    void inflight.then(trigger, trigger)
+  }
+}
+
 function Console({ logout }: { logout: () => Promise<void> }) {
   const cache = useQueryClient()
   const projects = useProjects()
   const client = useMemo(() => new DashboardConnection(() => { void cache.invalidateQueries() },
-    () => { void cache.invalidateQueries({ queryKey: ['projects'] }, { cancelRefetch: false }) }), [cache])
+    () => { void cache.invalidateQueries({ queryKey: ['projects'] }, { cancelRefetch: false }) },
+    ({ taskId: tid, runId: rid }) => {
+      invalidateAfterFetch(cache, rid ? ['run-artifacts', tid, rid] : ['run-artifacts', tid])
+    }), [cache])
   const workerMap = useDashboard(state => state.workers)
   const clockOffset = useDashboard(state => state.clockOffset)
   const live = useDashboard(state => state.tasks)

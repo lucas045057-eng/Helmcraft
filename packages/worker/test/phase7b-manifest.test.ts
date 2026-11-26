@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest'
 import { WorkspaceHarnessConfig } from '../src/config/schema.js'
 import { compileGlob } from '../src/harness/glob.js'
 import { scanManifest, diffManifest } from '../src/harness/manifest.js'
-import { sensitivePaths } from '../src/harness/tamper.js'
+import { inspectCommands, sensitivePaths } from '../src/harness/tamper.js'
 
 const config = (argv: string[]) => WorkspaceHarnessConfig.parse({ verify: { commands: [{ id: 'check', argv }] } })
 it.each('cmd CMD.EXE powershell pwsh bash sh zsh dash fish ksh csh tcsh wsl'.split(' '))('VF-1 forbids interpreter %s', exe => {
@@ -88,4 +88,18 @@ it('keeps exact totals and checks sensitive changes beyond the 200 displayed pat
   expect(changes.sample).toHaveLength(200)
   expect(changes.sample.some(p => p.path === 'z.config.js')).toBe(false)
   expect(tamper?.paths).toEqual(['z.config.js'])
+})
+
+it('normalizes versioned python3.11 interpreters for module baselining and unknown flags', async () => {
+  await mkdir(join(root, 'local_pkg'), { recursive: true })
+  await writeFile(join(root, 'local_pkg', '__init__.py'), '')
+  await writeFile(join(root, 'local_pkg', 'runner.py'), 'print("ok")\n')
+  await writeFile(join(root, 'script.py'), 'print("script")\n')
+
+  const mod = inspectCommands(root, [{ argv: ['python3.11', '-m', 'local_pkg.runner'] }])
+  expect(mod.unbaselined).toBe(false)
+  expect(mod.paths).toEqual(['local_pkg/__init__.py', 'local_pkg/runner.py'])
+
+  const unknown = inspectCommands(root, [{ argv: ['python3.11', '--unknown-flag', 'script.py'] }])
+  expect(unknown.unbaselined).toBe(true)
 })

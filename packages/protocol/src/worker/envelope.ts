@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { FrameId } from '../common.js'
 import { HubChallenge, HubReject, HubWelcome, WorkerHello } from './handshake.js'
 import { HubHeartbeatAck, WorkerBye, WorkerHeartbeat, WorkerState } from './heartbeat.js'
-import { CmdAck, ProjectRelease, RunCancel, RunDispatch, RunInput, WorkerDrain, WorkerProbe } from './commands.js'
+import { CmdAck, ProjectPreflight, ProjectRebaseline, ProjectRelease, RunCancel, RunDispatch, RunInput, WorkerDrain, WorkerProbe } from './commands.js'
 import { RunAckFrame, RunEventsFrame, RunGapFrame, RunResendFrame } from './run-events.js'
 
 export { FrameId, RunId, TaskId, WorkerId } from '../common.js'
@@ -27,6 +27,8 @@ export const HubCommand = z.discriminatedUnion('type', [
   frame('worker.drain', WorkerDrain),
   frame('worker.probe', WorkerProbe),
   frame('project.release', ProjectRelease),
+  frame('project.preflight', ProjectPreflight),
+  frame('project.rebaseline', ProjectRebaseline),
 ])
 
 export const HubToWorkerFrame = z.discriminatedUnion('type', [

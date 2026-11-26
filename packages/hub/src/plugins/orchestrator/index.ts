@@ -1,10 +1,10 @@
 import { Context, Service } from 'cordis'
 import { z } from 'zod'
-import { and, eq, gte, inArray, sql } from 'drizzle-orm'
+import { and, eq, gte, inArray, isNull, sql } from 'drizzle-orm'
 import { KeyedMutex, redact, runId, stableHash, taskId, ulid } from '@agent-hub/common'
 import { allowedActions, HANDOFF_DEFAULT_PROMPTS, stripBoardContent, CreateTaskRequest, personalRoleSettings, Profile, reduce } from '@agent-hub/protocol'
-import type { AcceptRunRequest, HandoffPreviewQuery, Actor, AdapterId, ApprovalOverrides, CmdAckPayload, DeliverResultRequest, HubCommand, LogsQuery,
-  RunDispatch, RunEventsFrame, RunGapFrame, TaskEvent, TaskEffect, TaskListQuery, WorkerHello } from '@agent-hub/protocol'
+import type { AcceptRunRequest, AutopilotPreflightRequest, AutopilotPreflightResponse, AutopilotStartRequest, HandoffPreviewQuery, Actor, AdapterId, ApprovalOverrides, CmdAckPayload, DeliverResultRequest, HubCommand, LogsQuery,
+  ProjectBriefingView, RunArtifactView, RunAttachment, RunBriefingRequest, RunDispatch, RunEventsFrame, RunGapFrame, TaskEvent, TaskEffect, TaskListQuery, TaskOrigin, WorkerHello } from '@agent-hub/protocol'
 import type { HandoffInput, ApprovalOptions, CreateOptions, CreateTaskInput, Orchestrator, ReasonOptions, ResultSender, VersionOptions } from '../../services/orchestrator.js'
 import type { Repos, RunRow, StoredEvent, TaskRow } from '../../services/store.js'
 import type { PolicyOutcome } from '../../services/policy.js'
@@ -13,7 +13,7 @@ import { HubError } from '../../services/errors.js'
 import { safeOn, guardAsync } from '../../kernel/safe.js'
 import { HubConfigSchema } from '../../config/schema.js'
 import { onHotUpdate } from '../../kernel/hot-update.js'
-import { auditLogs, idempotencyKeys, inputRequests, taskRuns, tasks, workers } from '../store-sqlite/schema.js'
+import { auditLogs, idempotencyKeys, inputRequests, runArtifacts, taskRuns, tasks, workers } from '../store-sqlite/schema.js'
 import { activeRunStatuses } from '../../services/workers.js'
 import { findInput, findRun, findTask, owner, runView, system, taskDetail, taskRunsFor, taskState, taskView } from './views.js'
 import { selectWorker } from './scheduler.js'
@@ -28,13 +28,15 @@ import type { HarnessRecord } from './harness.js'
 import { acceptRun, autoAccept, observeAcceptance, pointerView, rollbackWriteRegistration } from './pointers.js'
 import { handoffSource, preview } from './handoff.js'
 import { existingPlan, findPlanningTask, recordPlanningTask, recordPlanResult } from './personal-plan.js'
-import { beginImplementation, blockProject, executionStep, finishImplementation, managedTask, occupied, projectExecution } from './personal-execution.js'
+import { beginImplementation, blockProject, executionStep, finishImplementation, managedTask, occupied, projectExecution, projectOptions } from './personal-execution.js'
 import { beginGate, finishGate, gatePhases, personalDispatch, planAdvice, prepareGate, stepCanDispatch } from './personal-gates.js'
 import { finishDelivery } from './personal-delivery.js'
 import { snapshotMethod, withMethod } from './methods.js'
 import { blockUnconfirmedDelivery, closeProject } from './personal-controls.js'
+import { requestPreflight, startAutopilot as launchAutopilot } from './personal-autopilot.js'
+import { dispatchBriefingAction as runBriefingAction, listBriefings as queryBriefings, nextDailyBriefingAt, runStewardBriefing } from './steward.js'
 
-type Effect = TaskEffect | { type: 'pointer.changed'; workerId: string; workspaceId: string } | { type: 'harness.updated' } | { type: 'verification.outcome'; status: 'passed' | 'failed' | 'unverified' | 'skipped' }
+type Effect = TaskEffect | { type: 'pointer.changed'; workerId: string; workspaceId: string } | { type: 'harness.updated' } | { type: 'verification.outcome'; status: 'passed' | 'failed' | 'unverified' | 'skipped' } | { type: 'personal.phase'; projectId: string; prevPhase?: string }
 export interface OrchestratorConfig {
   permissions: HubConfig['permissions']
   harness: HubConfig['harness']
@@ -44,6 +46,7 @@ export interface OrchestratorConfig {
   limits: { maxActivePerRequester: number; requesterTasksPerHour: number }
   requesterReplyPolicy: 'auto' | 'owner_review'
   timezone?: string
+  steward?: HubConfig['steward']
 }
 type CommandPayload<T> = T extends HubCommand ? Pick<T, 'type' | 'payload'> : never
 type Command = CommandPayload<HubCommand>
@@ -57,6 +60,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     harness: HubConfigSchema.shape.harness, permissions: HubConfigSchema.shape.permissions,
     requesterReplyPolicy: z.enum(['auto', 'owner_review']).default('auto'),
     timezone: HubConfigSchema.shape.server.unwrap().shape.timezone,
+    steward: HubConfigSchema.shape.steward.optional(),
   })
   private readonly mutex = new KeyedMutex<string>()
   private readonly timers = new TimerWheel()
@@ -100,7 +104,15 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       if (worker.connection === 'online' && (previous?.connection !== 'online' || worker.drain !== previous.drain ||
         JSON.stringify(worker.adapters) !== JSON.stringify(previous.adapters))) this.schedule()
     })
-    onHotUpdate<OrchestratorConfig>(ctx, ['scheduler', 'tasks', 'limits', 'requesterReplyPolicy', 'harness', 'permissions'], next => { this.config = next; this.schedule() })
+    safeOn(ctx, 'personal/phase', ev => {
+      if (!['blocked', 'done', 'stopped'].includes(ev.phase)) this.schedule()
+    })
+    onHotUpdate<OrchestratorConfig>(ctx, ['scheduler', 'tasks', 'limits', 'requesterReplyPolicy', 'harness', 'permissions', 'steward'], next => {
+      this.config = next
+      this.scheduleSteward()
+      this.schedule()
+    })
+    this.scheduleSteward()
     this.schedule()
     ctx.effect(() => async () => { this.pauseScheduling(); await this.pendingScheduling }, 'orchestrator:stop')
   }
@@ -209,17 +221,34 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         approvalDeadlineAt: next.status === 'awaiting_approval' ? now + (policy.approvalTimeoutMs ?? this.config.tasks.approvalTimeoutMs) : null,
         queuedAt: next.status === 'queued' ? now : null, finishedAt: next.status === 'rejected' ? now : null, createdAt: now, updatedAt: now,
       })
+      for (const art of opts.initialArtifacts ?? []) {
+        this.ctx.store.artifacts.save({
+          taskId: id,
+          runId: null,
+          kind: art.kind,
+          label: art.label,
+          mimeType: art.mimeType,
+          data: art.data,
+          ...(art.meta !== undefined && { meta: art.meta }),
+          now,
+          repos: db,
+        })
+      }
       if (opts.personalPlan) {
         recordPlanningTask(db, opts.personalPlan, id, now)
         if (next.status === 'rejected') blockProject(db, opts.personalPlan.projectId, 'POLICY_REJECTED', now)
+        effects.push({ type: 'personal.phase', projectId: opts.personalPlan.projectId })
       }
       if (opts.implementProject) {
         beginImplementation(db, opts.implementProject, id, now)
         if (next.status === 'rejected') blockProject(db, opts.implementProject, 'POLICY_REJECTED', now)
+        effects.push({ type: 'personal.phase', projectId: opts.implementProject, prevPhase: 'implementation_ready' })
       }
       if (opts.gateProject) {
+        const prev = db.prepare('SELECT phase FROM personal_projects WHERE id=?').pluck().get(opts.gateProject) as string | undefined
         beginGate(db,opts.gateProject,id,now)
         if (next.status === 'rejected') blockProject(db,opts.gateProject,'POLICY_REJECTED',now)
+        effects.push({ type: 'personal.phase', projectId: opts.gateProject, ...(prev && { prevPhase: prev }) })
       }
       this.audit(db, id, actor, 'task.submit', null, next.status, { policy })
       if (handoff) this.audit(db, id, actor, 'task.handoff.created', null, next.status,
@@ -466,8 +495,8 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         const step = executionStep(db,id)
         const project = step?.project_id ?? findPlanningTask(db,id)?.id
         // The terminal delivery receipt includes the Git operation and its precise stopping reason.
-        const deliveryResult = step && ['commit','push','verify_final'].includes(step.kind) && event.type === finishedType.failed
-        if (project && !deliveryResult) blockProject(db, project, next.errorCode ?? event.type, now)
+        const managedStepFailed = !!step && event.type === finishedType.failed
+        if (project && !managedStepFailed) blockProject(db, project, next.errorCode ?? event.type, now)
       }
       if (!db.tasks.casUpdate(id, task.version, changes)) {
         throw new HubError('VERSION_CONFLICT', 409, { current: this.view(this.requireTask(id), event.actor) })
@@ -522,6 +551,20 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
           if (effect.action === 'clear') this.timers.delete(effect.timer + ':' + id)
           else this.taskTimers(task)
           break
+        case 'personal.phase': {
+          const row = this.db.prepare('SELECT id,phase,current_item,reason,subdir,options_json,binding_json FROM personal_projects WHERE id=?')
+            .get(effect.projectId) as { id: string; phase: string; current_item: string | null; reason: string | null; subdir: string | null; options_json: string | null; binding_json: string } | undefined
+          if (!row || row.phase === effect.prevPhase) break
+          const opts = projectOptions(row.options_json)
+          const b = JSON.parse(row.binding_json) as { workspaceId: string }
+          this.ctx.emit('personal/phase', {
+            projectId: row.id, phase: row.phase, ...(effect.prevPhase && { prevPhase: effect.prevPhase }),
+            currentItem: row.current_item, reason: row.reason,
+            label: row.subdir ? `${b.workspaceId}/${row.subdir}` : b.workspaceId,
+            ...(opts.notifyFeishuChatId && { notifyFeishuChatId: opts.notifyFeishuChatId }),
+          })
+          break
+        }
         case 'metric.stale_run_event': this.staleEvents++; break
       }
     }
@@ -532,16 +575,68 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     const harness = run.harnessJson ? toWireDirective(run.harnessJson as HarnessRecord) : undefined
     const plan = findPlanningTask(this.db, task.id)
     const step = executionStep(this.db, task.id)
+    const planOpts = plan ? projectOptions(plan.options_json) : undefined
+    const supportsAttachments = this.ctx.workers.capabilities(run.workerId).includes('attachments.v1')
+    const inbound = this.db.select().from(runArtifacts).where(and(eq(runArtifacts.taskId, task.id), isNull(runArtifacts.runId))).all()
+      .filter(art => art.kind === 'inbound_image' || art.kind === 'inbound_audio' || art.kind === 'inbound_file')
+    const attachments: RunAttachment[] = []
+    let attachmentError: string | undefined
+    if (inbound.length) {
+      if (!supportsAttachments) {
+        attachmentError = '执行节点不支持附件能力 (attachments.v1)，已拒绝派发'
+      } else if (inbound.length > 8) {
+        attachmentError = '任务初始附件数量超过单次派发上限'
+      } else {
+        let usedBytes = 0
+        for (const art of inbound) {
+          const kind = art.kind === 'inbound_image' ? 'image' : art.kind === 'inbound_audio' ? 'audio' : 'file'
+          const buf = this.ctx.store.artifacts.readBytes(art)
+          if (!buf) {
+            attachmentError = `任务所需附件 ${art.label} 损坏或丢失，无法派发`
+            break
+          }
+          if (buf.length + usedBytes > 500_000) {
+            attachmentError = '任务附件总大小超出上下文传输上限'
+            break
+          }
+          const name = art.label.replace(/[^A-Za-z0-9._-]/g, '_') || art.id
+          usedBytes += buf.length
+          attachments.push({ id: art.id, kind, name: name.slice(0, 128), mimeType: art.mimeType, encoding: 'base64', data: buf.toString('base64') })
+        }
+      }
+    }
+    if (attachmentError) {
+      void guardAsync(this.ctx, this.failUnreadableAttachment(task.id, run.id, run.workerId, attachmentError), 'fail unreadable attachment')
+      return
+    }
     const payload: RunDispatch = { taskId: task.id, taskNo: task.taskNo, runId: run.id, attempt: run.attempt,
       adapter: run.adapter as AdapterId, workspaceId: run.workspaceId, profile: task.profile, prompt: withMethod(task.prompt, task.methodJson),
       timeoutMs: task.timeoutMs, idleTimeoutMs: this.config.tasks.idleTimeoutMs, notAfter: run.notAfter,
-      ...(plan ? { personal: { role: 'main' as const, projectId: plan.id, binding: JSON.parse(plan.binding_json), planSources: JSON.parse(plan.sources_json) } } :
+      ...(attachments.length && { attachments }),
+      ...(plan ? { personal: { role: 'main' as const, projectId: plan.id, binding: JSON.parse(plan.binding_json), planSources: JSON.parse(plan.sources_json),
+        ...(planOpts?.inlinePrompt !== undefined && { inlinePrompt: planOpts.inlinePrompt }),
+        ...(planOpts?.boardContext !== undefined && { boardContext: planOpts.boardContext }),
+        ...(planOpts?.methodBlock !== undefined && { methodBlock: planOpts.methodBlock }),
+        ...(planOpts?.noChecks && { noChecks: true as const }) } } :
         step ? { personal: personalDispatch(this.db,step), ...(harness && { harness }) } : harness && { harness }),
       origin: { source: task.source, actorType: task.requesterType },
       ...(task.subdir && { subdir: task.subdir }), ...(task.model && { model: task.model }),
       ...(task.resumeSessionId && (!source || source.adapter === run.adapter) && { resume: { cliSessionId: task.resumeSessionId } }),
     }
     this.send(run, { type: 'run.dispatch', payload })
+  }
+  private async failUnreadableAttachment(taskId: string, runId: string, workerId: string, reason: string) {
+    return this.mutex.runExclusive(taskId, () => {
+      const current = findRun(this.db, runId)
+      if (!current || !activeRunStatuses.some(status => status === current.status)) return
+      const effects = this.ctx.store.tx(db => {
+        const list = this.apply(db, taskId, { type: 'RUN_FAILED', actor: workerActor(workerId), runId, errorCode: 'INTERNAL' })
+        db.update(taskRuns).set({ errorMessage: reason }).where(eq(taskRuns.id, runId)).run()
+        db.update(tasks).set({ errorMessage: reason }).where(eq(tasks.id, taskId)).run()
+        return list
+      })
+      this.after(taskId, effects)
+    })
   }
   private sendCancel(run: RunRow, force = false) {
     const reason = run.cancelReason === 'input_timeout' || run.cancelReason === 'hub_backstop' ? run.cancelReason : 'user'
@@ -579,10 +674,16 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   private async ingest(workerId: string, id: string, events: StoredEvent[]) {
     const run = findRun(this.db, id)
     if (!run || run.workerId !== workerId) throw new HubError('RUN_NOT_FOUND', 404)
+    const allowVisual = this.ctx.workers.capabilities(workerId).includes('visual.v1')
+    const normalized = allowVisual ? events : events.map(event => {
+      if (event.kind !== 'visual') return event
+      this.harnessUnnegotiatedEvents++
+      return { kind: 'progress' as const, seq: event.seq, ts: event.ts, phase: 'visual.' + event.phase, detail: event.status }
+    })
     const effects: Effect[] = []
     let persisted: StoredEvent[] = []
-    const stateful = events.some(event => event.kind !== 'log' && event.kind !== 'agent' && event.kind !== 'gap')
-    const enqueue = () => this.ctx.store.ingest.enqueue(id, events, (db, accepted) => {
+    const stateful = normalized.some(event => event.kind !== 'log' && event.kind !== 'agent' && event.kind !== 'gap')
+    const enqueue = () => this.ctx.store.ingest.enqueue(id, normalized, (db, accepted) => {
       persisted = accepted
       if (stateful) for (const event of accepted) this.applyRunEvent(db, run, event, effects)
     })
@@ -631,10 +732,55 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       }
       effects.push({ type: 'harness.updated' })
       if (!this.ctx.workers.capabilities(run.workerId).includes('verify.v1')) this.harnessUnnegotiatedEvents++
+    } else if (event.kind === 'visual') {
+      const fresh = findRun(db, run.id)!
+      const rec = (fresh.harnessJson as (HarnessRecord & {
+        visual?: Record<string, { status: 'passed' | 'failed' | 'skipped'; reason?: string; shots: unknown[]; routeStatus?: Record<string, string> }>
+      }) | null) ?? { v: 1, directive: null }
+      const prev = rec.visual?.[event.phase]
+      const routeStatus: Record<string, string> = { ...(prev?.routeStatus ?? {}) }
+      const mergedShots = [...((prev?.shots as Array<{ routeIndex?: number | undefined; route?: string | undefined }>) ?? [])]
+      if (!event.shots.length) {
+        routeStatus['__phase__'] = event.status
+      } else {
+        for (const shot of event.shots) {
+          const key = shot.routeIndex !== undefined ? `idx:${shot.routeIndex}` : `route:${shot.route}`
+          routeStatus[key] = event.status
+          const idx = mergedShots.findIndex(s =>
+            s.routeIndex !== undefined && shot.routeIndex !== undefined
+              ? s.routeIndex === shot.routeIndex
+              : s.routeIndex === undefined && shot.routeIndex === undefined && s.route === shot.route,
+          )
+          if (idx >= 0) mergedShots[idx] = shot
+          else if (mergedShots.length < 12) mergedShots.push(shot)
+        }
+      }
+      const statuses = Object.values(routeStatus)
+      const aggStatus: 'passed' | 'failed' | 'skipped' = statuses.includes('failed')
+        ? 'failed'
+        : statuses.includes('passed')
+          ? 'passed'
+          : event.status
+      const reason = event.reason ?? (aggStatus === 'failed' ? prev?.reason : undefined)
+      const visual = {
+        ...(rec.visual ?? {}),
+        [event.phase]: {
+          status: aggStatus,
+          ...(reason && aggStatus !== 'passed' && { reason }),
+          shots: mergedShots,
+          routeStatus,
+        },
+      }
+      db.update(taskRuns).set({ harnessJson: { ...rec, visual } }).where(eq(taskRuns.id, run.id)).run()
+      effects.push({ type: 'harness.updated' })
     } else if (event.kind === 'input_request') {
       effects.push(...this.apply(db, task.id, { type: 'INPUT_REQUEST', actor, runId: run.id, requestId: event.requestId,
         question: event.question, ...(event.options && { options: event.options }) }))
     } else if (event.kind === 'finished') {
+      const trackedProjectId = findPlanningTask(db, task.id)?.id ?? executionStep(db, task.id)?.project_id
+      const prevPhase = trackedProjectId
+        ? (db.prepare('SELECT phase FROM personal_projects WHERE id=?').pluck().get(trackedProjectId) as string | undefined)
+        : undefined
       recordPlanResult(db, task.id, run.id, event, this.now())
       effects.push(...this.apply(db, task.id, { type: finishedType[event.status], actor, runId: run.id,
         ...(event.errorCode && { errorCode: event.errorCode }) }))
@@ -646,6 +792,16 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       finishImplementation(db, fresh, event, this.now())
       finishGate(db,fresh,event,this.now())
       finishDelivery(db,fresh,event,this.now())
+      if (event.status === 'failed') {
+        const failedStep = executionStep(db, task.id)
+        if (failedStep) {
+          const currentPhase = db.prepare('SELECT phase FROM personal_projects WHERE id=?').pluck().get(failedStep.project_id) as string | undefined
+          if (currentPhase && !['done', 'stopped', 'blocked'].includes(currentPhase)) {
+            blockProject(db, failedStep.project_id, event.summary === 'CHECKS_REBASELINE_REQUIRED' ? 'CHECKS_REBASELINE_REQUIRED' : (event.errorCode ?? 'RUN_FAILED'), this.now())
+          }
+        }
+      }
+      if (trackedProjectId) effects.push({ type: 'personal.phase', projectId: trackedProjectId, ...(prevPhase && { prevPhase }) })
       const outcome = finishVerification(db, fresh, event.verification, event.errorCode === 'WORKER_RESTARTED' ? 'WORKER_RESTARTED' : 'INTERNAL')
       if (outcome) {
         effects.push({ type: 'verification.outcome', status: outcome.status })
@@ -771,17 +927,33 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
           await this.submit(gate.input,owner,{gateProject:id})
           continue
         }
-        const { binding, item, execution, timeout } = projectExecution(this.db, id)
+        const { binding, options, item, execution, timeout } = projectExecution(this.db, id, { requireV2: true })
         if (timeout < 10000) throw new Error('TIME_BUDGET')
         if (item.status !== 'pending') throw new Error('FIXED_ITEM_UNAVAILABLE')
+        const inlineLines = options.inlinePrompt !== undefined && execution.sources.includes('INLINE_GOAL.md')
+          ? options.inlinePrompt.split(/\r?\n/u).map((l, idx) => `INLINE_GOAL.md:L${idx + 1} ${l}`).join('\n')
+          : undefined
+        const implTarget = binding.mode === 'flexible'
+          ? {
+              adapter: binding.adapters?.main ?? personalRoleSettings.main.adapter,
+              profile: 'edit' as const,
+              ...(binding.models?.main && { model: binding.models.main }),
+            }
+          : personalRoleSettings.main
         const prompt = ['Implement only the following fixed task in the current repository. Read the cited requirements.',
           'Keep the plan and requirement files unchanged. Leave Git commit and push to the delivery step.',
-          JSON.stringify({item:execution.item,planAdvice:planAdvice(this.db,id)})].join('\n')
+          JSON.stringify({item:execution.item, ...(inlineLines && { inlineRequirements: inlineLines }), planAdvice:planAdvice(this.db,id)})].join('\n')
         await this.submit({ prompt, requiredWorkerId: binding.workerId, workspaceId: binding.workspaceId,
-          ...personalRoleSettings.main, timeoutMs: timeout }, owner, { implementProject: id })
+          ...(binding.subdir && { subdir: binding.subdir }), ...implTarget, timeoutMs: timeout }, owner, { implementProject: id })
       } catch (error) {
         const reason = error instanceof HubError ? (error.details?.reason ?? error.code) : error instanceof Error ? error.message : ''
-        this.ctx.store.tx(db => blockProject(db,id,typeof reason === 'string' && /^[A-Z_]{1,80}$/u.test(reason) ? reason : 'PROJECT_SCHEDULING_UNCONFIRMED',this.now()))
+        const finalReason = typeof reason === 'string' && /^[A-Z_]{1,80}$/u.test(reason) ? reason : 'PROJECT_SCHEDULING_UNCONFIRMED'
+        this.ctx.store.tx(db => {
+          if (finalReason === 'CHECKS_REBASELINE_REQUIRED') {
+            db.prepare("UPDATE personal_projects SET resume_phase=? WHERE id=? AND phase NOT IN ('done','stopped','blocked')").run(phase, id)
+          }
+          blockProject(db, id, finalReason, this.now())
+        })
       }
     }
     const queue = this.db.tasks.listQueued(this.config.scheduler.scanLimit)
@@ -796,22 +968,51 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         if (managed && this.db.prepare('SELECT control FROM personal_projects WHERE id=?').pluck().get(managed) !== 'running') return
         if (project && project.phase !== 'planning') return
         if (step) {
-          const phase = this.db.prepare('SELECT phase FROM personal_projects WHERE id=?').pluck().get(step.project_id)
-          if (typeof phase !== 'string' || !stepCanDispatch(step.kind,phase)) return
+          const row = this.db.prepare('SELECT phase,plan_json FROM personal_projects WHERE id=?').get(step.project_id) as { phase: string; plan_json: string | null } | undefined
+          if (!row || !stepCanDispatch(step.kind, row.phase)) return
+          let parsedPlan: { checksDigestVersion?: number } | undefined
+          if (row.plan_json) {
+            try { parsedPlan = JSON.parse(row.plan_json) as { checksDigestVersion?: number } } catch { parsedPlan = undefined }
+          }
+          if (parsedPlan?.checksDigestVersion !== 2) {
+            const phaseForStep: Record<string, string> = {
+              implement: 'implementation_ready', repair: 'repair_ready', PLAN_READY: 'plan_ready',
+              review: 'review_ready', debug: 'debug_ready', REVIEW_REJECTED_TWICE: 'reject_advice_ready',
+              DEBUG_NO_ROOT_CAUSE_TWICE: 'debug_advice_ready', commit: 'delivery_ready', push: 'push_ready',
+              verify_final: 'core_ready', FINAL_READY: 'final_ready',
+            }
+            const resumePhase = phaseForStep[step.kind] ?? row.phase
+            const blockNow = this.now()
+            this.ctx.store.tx(db => {
+              db.prepare("UPDATE personal_projects SET resume_phase=? WHERE id=? AND phase NOT IN ('done','stopped','blocked')").run(resumePhase, step.project_id)
+              if (step.run_id === null) {
+                db.prepare('DELETE FROM personal_steps WHERE task_id=? AND run_id IS NULL').run(step.task_id)
+                if (step.kind === 'repair' || step.kind === 'debug') {
+                  db.prepare('UPDATE personal_items SET repair_debug_calls=MAX(0,repair_debug_calls-1) WHERE project_id=? AND item_id=?').run(step.project_id, step.item_id)
+                }
+              }
+              db.update(tasks).set({ status: 'cancelled', version: task.version + 1, updatedAt: blockNow, finishedAt: blockNow }).where(eq(tasks.id, task.id)).run()
+              blockProject(db, step.project_id, 'CHECKS_REBASELINE_REQUIRED', blockNow)
+            })
+            return
+          }
         }
         if (!project && !step && task.profile !== 'readonly' && occupied(this.db, task.workspaceId, task.requiredWorkerId)) return
         const active = this.activeRuns()
         const now = this.now()
         const concurrent = !this.config.permissions.disableRequesterLimits && task.requesterType === 'requester' && this.db.select({ count: sql<number>`count(*)` }).from(tasks)
-          .where(and(eq(tasks.requesterType, 'requester'), eq(tasks.requesterId, task.requesterId), inArray(tasks.status, activeRunStatuses))).get()!.count
+          .where(and(eq(tasks.requesterId, task.requesterId), eq(tasks.requesterType, 'requester'), inArray(tasks.status, activeRunStatuses))).get()!.count
         const prior = taskRunsFor(this.db, task.id)
         const refused = new Set(prior.filter(run => run.status === 'refused' &&
           now - (run.finishedAt ?? 0) < this.config.scheduler.refuseBackoffMs).map(run => run.workerId))
         const workerRows = this.db.select().from(workers).all()
+        const requiresAttachments = !!this.db.select({ id: runArtifacts.id }).from(runArtifacts)
+          .where(and(eq(runArtifacts.taskId, task.id), isNull(runArtifacts.runId))).limit(1).get()
+        const requiresChecksDigestV2 = Boolean(project || step)
         const selected = concurrent !== false && concurrent >= this.config.limits.maxActivePerRequester
           ? { hint: 'REQUESTER_LIMIT', chosen: undefined }
           : selectWorker(task, this.ctx.workers.list(), active, this.config.scheduler.defaultAdapterOrder,
-            id => refused.has(id), id => workerRows.find(worker => worker.id === id)?.lastDispatchAt ?? 0)
+            id => refused.has(id), id => workerRows.find(worker => worker.id === id)?.lastDispatchAt ?? 0, requiresAttachments, requiresChecksDigestV2)
         if (!selected.chosen) {
           if ((selected.hint === 'HARNESS_UNSUPPORTED' || now - (task.queuedAt ?? now) >= this.config.scheduler.unschedulableWarnMs) && task.scheduleHint !== selected.hint) {
             this.ctx.store.tx(db => db.update(tasks).set({ scheduleHint: selected.hint! }).where(eq(tasks.id, task.id)).run())
@@ -835,6 +1036,57 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     view.hub.storageLevel = this.ctx.store.retention.storageLevel
     if (this.feishuStatus) view.feishu = this.feishuStatus
     return view
+  }
+  preflightProject(input: AutopilotPreflightRequest): Promise<AutopilotPreflightResponse> {
+    return requestPreflight(this.ctx, input)
+  }
+  startAutopilot(input: AutopilotStartRequest, actor: Actor, origin?: TaskOrigin) {
+    return launchAutopilot(this.ctx, this, input, actor, origin)
+  }
+  runBriefing(kind: 'morning' | 'manual' | 'patrol', filter: RunBriefingRequest = {}): ProjectBriefingView[] {
+    return runStewardBriefing(this.ctx, this.listProjects(), kind, filter, Boolean(filter.notifyFeishu || kind === 'morning'))
+  }
+  listBriefings(query: { workerId?: string; workspaceId?: string; subdir?: string; limit?: number } = {}): ProjectBriefingView[] {
+    return queryBriefings(this.db, query)
+  }
+  dispatchBriefingAction(briefingId: string, index: number, actor: Actor, opts?: { origin?: TaskOrigin; idempotencyKey?: string }) {
+    return runBriefingAction(this.ctx, this, briefingId, index, actor, opts)
+  }
+  listRunArtifacts(taskRef: string, runId: string): RunArtifactView[] {
+    const task = this.requireTask(taskRef)
+    const run = this.db.runs.get(runId)
+    if (!run || run.taskId !== task.id) throw new HubError('RUN_NOT_FOUND', 404)
+    return this.ctx.store.artifacts.listForRun(run.id, this.db).map(row => this.ctx.store.artifacts.toView(row))
+  }
+  private scheduleSteward() {
+    this.timers.delete('steward:patrol')
+    this.timers.delete('steward:morning')
+    const steward = this.config.steward
+    if (!steward?.enabled) return
+    const now = this.now()
+    const armPatrol = (at: number) => {
+      this.timers.set('steward:patrol', at, () => {
+        if (!this.config.steward?.enabled || this.paused) return
+        void guardAsync(this.ctx, Promise.resolve().then(() => {
+          this.runBriefing('patrol')
+        }), 'steward patrol').finally(() => {
+          if (this.config.steward?.enabled && !this.paused) armPatrol(this.now() + this.config.steward.patrolIntervalMs)
+        })
+      })
+    }
+    const armMorning = () => {
+      const cfg = this.config.steward
+      if (!cfg?.enabled) return
+      const nextAt = nextDailyBriefingAt(this.now(), cfg.briefingHour, cfg.briefingMinute, this.config.timezone ?? 'Asia/Shanghai')
+      this.timers.set('steward:morning', nextAt, () => {
+        if (!this.config.steward?.enabled || this.paused) return
+        void guardAsync(this.ctx, Promise.resolve().then(() => {
+          this.runBriefing('morning', { notifyFeishu: true })
+        }), 'steward morning briefing').finally(armMorning)
+      })
+    }
+    armPatrol(now + steward.patrolIntervalMs)
+    armMorning()
   }
   private readonly verificationOutcomes = { passed: 0, failed: 0, skipped: 0, unverified: 0 }
   metrics() { return { verificationOutcomes: { ...this.verificationOutcomes }, harnessDispatches: this.harnessDispatches, harnessUnnegotiatedEvents: this.harnessUnnegotiatedEvents, pointerCasRejected: this.pointerCasRejected, staleRunEvents: this.staleEvents, mutexKeys: this.mutex.size, timers: this.timers.size } }

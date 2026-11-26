@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { RunAttachment } from '@agent-hub/protocol'
 import type { Invocation } from '../adapters/types.js'
 
 const prefix = 'run-'
@@ -32,4 +33,23 @@ export function writeRunTempFiles(dir: string, invocation: Invocation, env: Node
       if (value === file.path) env[process.platform === 'win32' ? name.toUpperCase() : name] = path
     }
   }
+}
+
+export interface StagedAttachment {
+  id: string
+  kind: RunAttachment['kind']
+  name: string
+  mimeType: string
+  path: string
+}
+
+export function stageRunAttachments(dir: string, attachments: RunAttachment[]): StagedAttachment[] {
+  return attachments.map((att, index) => {
+    if (!/^[A-Za-z0-9._-]+$/.test(att.name)) throw new Error('Invalid attachment filename')
+    const filename = `att-${index + 1}-${att.name}`
+    const path = join(dir, filename)
+    const buffer = Buffer.from(att.data, 'base64')
+    writeFileSync(path, buffer, { mode: 0o600, flag: 'wx' })
+    return { id: att.id, kind: att.kind, name: att.name, mimeType: att.mimeType, path }
+  })
 }

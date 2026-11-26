@@ -5,6 +5,8 @@ export class FakeFeishuTransport implements FeishuTransport {
   handlers!: FeishuHandlers
   readonly messages = new Map<string, { target: string; reply: boolean; body: OutboundMessage }>()
   readonly patches: { id: string; card: CardJson }[] = []
+  readonly resources = new Map<string, { data: Buffer; mimeType: string }>()
+  readonly uploadedImages: { imageKey: string; data: Buffer; mimeType?: string }[] = []
   private seq = 0
   private state: ConnectionState = 'connecting'
   closes = 0
@@ -23,6 +25,16 @@ export class FakeFeishuTransport implements FeishuTransport {
   async patchCard(id: string, card: CardJson) {
     this.patches.push({ id, card })
     this.messages.get(id)!.body = { type: 'interactive', card }
+  }
+  async downloadResource(_messageId: string, fileKey: string) {
+    const found = this.resources.get(fileKey)
+    if (!found) throw new Error('Missing fake resource: ' + fileKey)
+    return found
+  }
+  async uploadImage(data: Buffer, mimeType?: string) {
+    const imageKey = 'img_fake_' + (this.uploadedImages.length + 1)
+    this.uploadedImages.push({ imageKey, data, ...(mimeType && { mimeType }) })
+    return { imageKey }
   }
   message(id: string, text: string, user = 'ou_req', opts: Partial<FeishuMessageEvent['message']> = {}) {
     return this.handlers.onMessage({ event_id: 'evt_' + id, sender: { sender_type: 'user', sender_id: { open_id: user } },

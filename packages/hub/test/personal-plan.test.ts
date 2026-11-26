@@ -7,7 +7,7 @@ const binding = { workerId: 'plan-worker', workspaceId: 'sandbox', root: '/work/
   remote: 'origin', ref: 'refs/heads/main', destination: '1'.repeat(64), executables: { main: '/bin/main', reviewer: '/bin/review', advisor: '/bin/advice' } }
 const payload = { binding, projectId: 'example', sources: ['README.md'] }
 
-it.each([true, false])('correlates and persists one ordered plan, verified receipt=%s', async valid => {
+it.each(['v2', 'invalid-digest', 'legacy-v1'] as const)('correlates and persists one ordered plan, mode=%s', async mode => {
   useAdminToken()
   const { hub, cleanup } = await openHarness(settings, { listen: false })
   try {
@@ -22,14 +22,18 @@ it.each([true, false])('correlates and persists one ordered plan, verified recei
     expect((await post({ ...payload, sources: ['SPEC.md'] })).status).toBe(409)
     expect((await post({ ...payload, projectId: 'other' })).status).toBe(409)
     const item = { title: 'deliver', requirements: ['README.md:L1'], acceptanceRefs: ['README.md:L2'], checks: ['core'] }
-    const summary = JSON.stringify({ items: ['B', 'A'].map(key => ({ ...item, id: key })), head: '1'.repeat(40),
-      sourceDigest: '2'.repeat(64), tasksDigest: '3'.repeat(64), checksDigest: '4'.repeat(64) })
+    const summary = JSON.stringify({
+      items: ['B', 'A'].map(key => ({ ...item, id: key })), head: '1'.repeat(40),
+      sourceDigest: '2'.repeat(64), tasksDigest: '3'.repeat(64), checksDigest: '4'.repeat(64),
+      ...(mode !== 'legacy-v1' && { checksDigestVersion: 2 }),
+    })
     const digest = createHash('sha256').update(summary).digest('hex')
+    const valid = mode === 'v2'
     const event = { seq: 1, ts: 200, kind: 'finished' as const, status: 'succeeded' as const, durationMs: 100,
-      exitCode: 0, signal: null, summary, personalResultDigest: valid ? digest : '0'.repeat(64) }
+      exitCode: 0, signal: null, summary, personalResultDigest: mode === 'invalid-digest' ? '0'.repeat(64) : digest }
     for (let i = 0; i < 2; i++) hub.ctx.store.tx(tx => recordPlanResult(tx, id, 'run-1', event, 300))
-    expect(db.prepare('SELECT phase,active_ms,plan_run_id FROM personal_projects').get()).toEqual({
-      phase: valid ? 'plan_ready' : 'blocked', active_ms: 100, plan_run_id: 'run-1' })
+    expect(db.prepare('SELECT phase,reason,active_ms,plan_run_id FROM personal_projects').get()).toEqual({
+      phase: valid ? 'plan_ready' : 'blocked', reason: valid ? null : 'PLAN_UNCONFIRMED', active_ms: 100, plan_run_id: 'run-1' })
     expect(db.prepare('SELECT item_id FROM personal_items ORDER BY ordinal').all()).toEqual(valid ? [{ item_id: 'B' }, { item_id: 'A' }] : [])
   } finally { await cleanup() }
 })

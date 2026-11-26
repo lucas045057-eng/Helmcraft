@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { RunDispatch } from '@agent-hub/protocol'
+import type { AdapterId, PersonalBinding, RunDispatch } from '@agent-hub/protocol'
 import { personalRoleSettings } from '@agent-hub/protocol'
 import { withinWorkspace } from '../security/workspace.js'
 import type { CliAdapter, InvocationInput } from '../adapters/types.js'
@@ -15,7 +15,7 @@ export const personalProfiles = {
 } as const
 export type PersonalRole = keyof typeof personalProfiles
 
-export function bindRepository(directory: string) {
+export function bindRepository(directory: string, options?: { allowNoUpstream?: boolean }) {
   const root = realpathSync.native(directory)
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, timeout: 5000,
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trimEnd()
@@ -24,7 +24,13 @@ export function bindRepository(directory: string) {
   git('rev-parse', '--verify', 'HEAD^{commit}')
   const upstream = git('for-each-ref', '--format=%(upstream:remotename)%00%(upstream:remoteref)', 'refs/heads/' + branch)
   const [remote, ref] = upstream.split('\0')
-  if (!remote || remote === '.' || remote.startsWith('-') || !ref?.startsWith('refs/heads/')) throw new Error('No fixed upstream remote/ref')
+  if (!remote || remote === '.' || remote.startsWith('-') || !ref?.startsWith('refs/heads/')) {
+    if (!options?.allowNoUpstream) throw new Error('No fixed upstream remote/ref')
+    return {
+      root, branch, remote: 'local', ref: 'refs/heads/' + branch,
+      destination: createHash('sha256').update(root + '\0' + branch).digest('hex'),
+    }
+  }
   const fetchUrl = git('remote', 'get-url', '--all', remote)
   const pushUrl = git('remote', 'get-url', '--push', '--all', remote)
   if (!pushUrl || !fetchUrl || /[\r\n]/u.test(fetchUrl + pushUrl)) throw new Error('Ambiguous remote destination')
@@ -34,10 +40,23 @@ export function bindRepository(directory: string) {
 
 interface RoleRequest {
   adapter: string; model?: string | undefined; profile: string; extraArgs?: string[] | undefined; env?: unknown; resume?: unknown
-  subdir?: string | undefined; origin?: RunDispatch['origin']
+  subdir?: string | undefined; origin?: RunDispatch['origin']; personal?: RunDispatch['personal']
 }
 export function checkPersonalRole(role: PersonalRole, request: RoleRequest) {
   const fixed = personalProfiles[role]
+  const binding = request.personal?.binding
+  if (binding?.mode === 'flexible') {
+    const expectedAdapter: AdapterId = binding.adapters?.[role] ?? fixed.adapter
+    const expectedSubdir = binding.subdir
+    if (request.adapter !== expectedAdapter ||
+        request.extraArgs?.length || request.env || request.resume ||
+        (request.subdir ?? undefined) !== (expectedSubdir ?? undefined) ||
+        (role !== 'main' && request.profile !== 'readonly') ||
+        (request.origin && request.origin.actorType !== 'owner')) {
+      throw new Error('Personal role policy mismatch')
+    }
+    return
+  }
   if (request.adapter !== fixed.adapter || request.model !== fixed.model || request.profile !== fixed.profile ||
       request.extraArgs?.length || request.env || request.resume || request.subdir ||
       (request.origin && request.origin.actorType !== 'owner')) throw new Error('Personal role policy mismatch')
@@ -58,7 +77,12 @@ export function readonlyAdvisor(root: string, command: string, args: string[]) {
     ...resolver, ...sharedState, '--chdir', '/tmp', '--', command, ...args] }
 }
 
-export function personalInvocation(role: PersonalRole, adapter: CliAdapter, input: InvocationInput, planning = false) {
+export function personalInvocation(role: PersonalRole, adapter: CliAdapter, input: InvocationInput, planning = false, binding?: PersonalBinding) {
+  if (binding?.mode === 'flexible') {
+    const profile = role === 'main' ? (planning ? 'readonly' : input.profile) : 'readonly'
+    const extraArgs = role === 'reviewer' && adapter.id === 'claude-code' ? ['--tools', ''] : []
+    return adapter.buildInvocation({ ...input, profile, extraArgs })
+  }
   const policy = personalProfiles[role]
   const fixed = role === 'main' ? ['--sandbox', planning ? 'read-only' : 'workspace-write', '-c', 'model_reasoning_effort="high"'] :
     role === 'reviewer' ? ['--permission-mode', 'dontAsk', '--effort', 'medium', '--safe-mode', '--strict-mcp-config',

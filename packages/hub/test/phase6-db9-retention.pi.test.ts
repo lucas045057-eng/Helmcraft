@@ -173,14 +173,20 @@ it('DB-9c 每日 04:00 VACUUM INTO 备份：仅轮换日期快照并保留 7 份
   const dir = mkdtempSync(join(tmpdir(), 'pi-db9-backup-'))
   const backup = join(dir, 'backup')
   mkdirSync(backup)
-  // 9 份历史日期快照 + 1 份迁移备份（非日期命名，必须保留）。
-  for (let day = 1; day <= 9; day++) writeFileSync(join(backup, 'hub-2026-01-0' + day + '.sqlite'), 'old')
   writeFileSync(join(backup, 'hub.sqlite.bak-0-prev'), 'migration')
   const clock = new FakeClock(Date.parse('2026-01-14T19:59:00Z')) // Asia/Shanghai 03:59
   const hub = await createTestHub({ storage: { path: join(dir, 'hub.sqlite') }, server: { timezone: 'Asia/Shanghai' },
     retention: { sliceIntervalMs: 60_000 } }, { listen: false, clock })
   try {
     const store = hub.ctx.store
+    // 9 份同库所有权的历史日期快照 + 1 份迁移备份（非日期命名，必须保留）。
+    const storeId = store.repos.prepare("SELECT value FROM meta WHERE key='artifacts_store_id'").pluck().get() as string
+    for (let day = 1; day <= 9; day++) {
+      const stub = new Database(join(backup, 'hub-2026-01-0' + day + '.sqlite'))
+      stub.exec('CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT); CREATE TABLE run_artifacts(id TEXT PRIMARY KEY, storage_rel_path TEXT, bytes INTEGER, sha256 TEXT);')
+      stub.prepare("INSERT INTO meta(key, value) VALUES ('artifacts_store_id', ?)").run(storeId)
+      stub.close()
+    }
     // 通过 IngestQueue 提交（WAL 中），验证备份包含“已提交但未 checkpoint”的数据。
     store.tx(db => seedRun(db, { id: 'pi-backup', taskStatus: 'running', runStatus: 'running', ageDays: 1, now: clock.now() }))
     const write = store.ingest.enqueue('pi-backup-run', [{ kind: 'started', seq: 1, ts: clock.now(), pid: 1,

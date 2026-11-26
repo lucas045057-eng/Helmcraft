@@ -3,16 +3,20 @@ import type { WorkerView } from '@agent-hub/protocol'
 import type { RunRow, TaskRow } from '../../services/store.js'
 
 export function selectWorker(task: TaskRow, workers: WorkerView[], active: RunRow[], order: AdapterId[],
-  recentRefusal: (id: string) => boolean, lastDispatch: (id: string) => number) {
+  recentRefusal: (id: string) => boolean, lastDispatch: (id: string) => number, requiresAttachments = false, requiresChecksDigestV2 = false) {
   const candidates = workers.filter(worker => worker.status === 'active' && worker.connection === 'online' && !worker.drain &&
     (!task.requiredWorkerId || task.requiredWorkerId === worker.id))
   const prefs = task.adapter ? [AdapterId.parse(task.adapter)] : [...(task.adapterPrefsJson ?? []), ...order]
   if (!candidates.length) return { hint: 'NO_ONLINE_WORKER' }
   if (task.handoffFromRunId && !candidates.some(worker => worker.protocolCapabilities?.includes('blackboard.v1'))) return { hint: 'HARNESS_UNSUPPORTED' }
+  if (requiresAttachments && !candidates.some(worker => worker.protocolCapabilities?.includes('attachments.v1'))) return { hint: 'HARNESS_UNSUPPORTED' }
+  if (requiresChecksDigestV2 && !candidates.some(worker => worker.protocolCapabilities?.includes('checks-digest.v2'))) return { hint: 'HARNESS_UNSUPPORTED' }
   let adapterAvailable = false, workspaceAvailable = false, profileAvailable = false
   const eligible = []
   for (const worker of candidates) {
     if (task.handoffFromRunId && !worker.protocolCapabilities?.includes('blackboard.v1')) continue
+    if (requiresAttachments && !worker.protocolCapabilities?.includes('attachments.v1')) continue
+    if (requiresChecksDigestV2 && !worker.protocolCapabilities?.includes('checks-digest.v2')) continue
     const readyAdapters = prefs.filter(id => worker.adapters.some(item => item.id === id && item.status === 'ready')) as AdapterId[]
     if (!readyAdapters.length) continue
     adapterAvailable = true

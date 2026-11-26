@@ -139,7 +139,7 @@ export const taskLogs = sqliteTable('task_logs', {
   seq: integer('seq').notNull(),
   ts: ts('ts').notNull(),                                       // Worker 事件时间（展示用）
   kind: text('kind', { enum: ['started', 'log', 'agent', 'session', 'progress', 'input_request',
-    'dropped', 'gap', 'finished', 'system', 'harness', 'workspace', 'verify'] }).notNull(),
+    'dropped', 'gap', 'finished', 'system', 'harness', 'workspace', 'verify', 'visual'] }).notNull(),
   stream: text('stream', { enum: ['stdout', 'stderr', 'system'] }),
   text: text('text'),                                           // log 文本（已脱敏，≤16 KiB）
   dataJson: text('data_json', { mode: 'json' }),                // 结构化负载
@@ -309,3 +309,55 @@ export const workspacePointers = sqliteTable('workspace_pointers', {
   acceptedAt: ts('accepted_at'),
   updatedAt: ts('updated_at').notNull(),
 }, (t) => [primaryKey({ columns: [t.workerId, t.workspaceId] })])
+
+export const feishuChatState = sqliteTable('feishu_chat_state', {
+  chatId: text('chat_id').notNull(),
+  threadId: text('thread_id').notNull().default(''),
+  workspaceId: text('workspace_id'),
+  subdir: text('subdir'),
+  adapter: text('adapter'),
+  profile: text('profile'),
+  lastTaskId: text('last_task_id'),
+  lastMessageId: text('last_message_id'),
+  updatedAt: ts('updated_at').notNull(),
+}, (t) => [primaryKey({ columns: [t.chatId, t.threadId] })])
+
+export const feishuProposals = sqliteTable('feishu_proposals', {
+  id: text('id').primaryKey(),
+  kind: text('kind').notNull(),
+  chatId: text('chat_id').notNull(),
+  messageId: text('message_id'),
+  actorOpenId: text('actor_open_id').notNull(),
+  payloadJson: text('payload_json').notNull(),
+  status: text('status').notNull().default('pending'),
+  createdAt: ts('created_at').notNull(),
+  expiresAt: ts('expires_at').notNull(),
+}, (t) => [index('ix_proposals_chat').on(t.chatId, t.status, t.expiresAt)])
+
+export const runArtifacts = sqliteTable('run_artifacts', {
+  id: text('id').primaryKey(),
+  taskId: text('task_id').notNull().references(() => tasks.id, { onDelete: 'cascade' }),
+  runId: text('run_id').references(() => taskRuns.id, { onDelete: 'cascade' }),
+  kind: text('kind', { enum: ['visual_before', 'visual_after', 'inbound_image', 'inbound_audio', 'inbound_file'] }).notNull(),
+  label: text('label').notNull(),
+  mimeType: text('mime_type').notNull(),
+  bytes: integer('bytes').notNull(),
+  sha256: text('sha256').notNull(),
+  storageRelPath: text('storage_rel_path').notNull(),
+  metaJson: text('meta_json'),
+  createdAt: ts('created_at').notNull(),
+}, (t) => [index('ix_artifacts_task').on(t.taskId, t.createdAt), index('ix_artifacts_run').on(t.runId, t.kind)])
+
+export const projectBriefings = sqliteTable('project_briefings', {
+  id: text('id').primaryKey(),
+  workerId: text('worker_id').notNull(),
+  workspaceId: text('workspace_id').notNull(),
+  subdir: text('subdir').notNull().default(''),
+  kind: text('kind').notNull(),
+  health: text('health').notNull(),
+  summary: text('summary').notNull(),
+  findingsJson: text('findings_json').notNull(),
+  actionsJson: text('actions_json').notNull(),
+  deliveredChatIdsJson: text('delivered_chat_ids_json'),
+  createdAt: ts('created_at').notNull(),
+}, (t) => [index('ix_briefings_project').on(t.workspaceId, t.subdir, t.createdAt)])

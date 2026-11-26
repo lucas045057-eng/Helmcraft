@@ -26,9 +26,16 @@ export async function observeDelivery(binding: PersonalBinding, checkBinding: ()
 
 // Keep commit and push in distinct Runs. Every write has a known precondition and an independent readback.
 export async function deliver(binding: PersonalBinding, action: PersonalDelivery, signal: AbortSignal,
-  checkBinding: () => void, verifyCore: () => Promise<void>) {
+  checkBinding: () => void, verifyCore: () => Promise<void>, inlinePrompt?: string) {
   const { root, remote, ref } = binding
   const { kind, spec, candidate } = action
+  const flexibleLocalOnly = binding.mode === 'flexible' && binding.autoPush === false
+  const flexibleNoCommit = binding.mode === 'flexible' && binding.autoCommit === false
+  const baselineOpts = {
+    ...(binding.mode && { mode: binding.mode }),
+    ...(binding.autoCommit !== undefined && { autoCommit: binding.autoCommit }),
+    ...(inlinePrompt !== undefined && { inlinePrompt }),
+  }
   const git = async (...args: string[]) => (await exec('git', args, { cwd: root, signal, timeout: 30000,
     maxBuffer: 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, encoding: 'utf8' })).stdout.trimEnd()
   const guard = () => { signal.throwIfAborted(); checkBinding() }
@@ -45,13 +52,13 @@ export async function deliver(binding: PersonalBinding, action: PersonalDelivery
     const current = checkedCandidate(root)
     if (current.head !== sha || current.indexTree !== candidate.tree || current.tree !== candidate.tree ||
         await git('show', '-s', '--format=%P %T', sha) !== candidate.head + ' ' + candidate.tree) throw new Error('COMMIT_CONTENT_CHANGED')
-    planBaseline(root, { ...spec, head: sha }, false)
+    planBaseline(root, { ...spec, head: sha }, false, baselineOpts)
   }
   guard()
   if (kind === 'commit') {
     if (action.commit || spec.head !== candidate.head) throw new Error('COMMIT_BASELINE_UNKNOWN')
-    planBaseline(root, spec, false)
-    if ((await tip()).sha !== candidate.head) throw new Error('REMOTE_PARENT_CHANGED')
+    planBaseline(root, spec, false, baselineOpts)
+    if (!flexibleLocalOnly && (await tip()).sha !== candidate.head) throw new Error('REMOTE_PARENT_CHANGED')
     for (const marker of ['MERGE_HEAD','CHERRY_PICK_HEAD','REVERT_HEAD','rebase-merge','rebase-apply','sequencer']) {
       if (existsSync(await git('rev-parse','--path-format=absolute','--git-path',marker))) throw new Error('GIT_OPERATION_IN_PROGRESS')
     }
@@ -66,9 +73,25 @@ export async function deliver(binding: PersonalBinding, action: PersonalDelivery
     await cleanCommit(commit)
     return { parent: candidate.head, tree: candidate.tree, commit }
   }
+  if (kind === 'verify_final' && flexibleNoCommit) {
+    if (action.commit || spec.head !== candidate.head) throw new Error('COMMIT_BASELINE_UNKNOWN')
+    guard()
+    planBaseline(root, spec, false, baselineOpts)
+    checkedCandidate(root, candidate)
+    await verifyCore()
+    guard()
+    planBaseline(root, spec, false, baselineOpts)
+    checkedCandidate(root, candidate)
+    return { parent: candidate.head, tree: candidate.tree }
+  }
   if (!action.commit) throw new Error('COMMIT_UNKNOWN')
   const commit = action.commit
   await cleanCommit(commit)
+  if (flexibleLocalOnly) {
+    if (kind === 'verify_final') await verifyCore()
+    await cleanCommit(commit)
+    return { parent: candidate.head, tree: candidate.tree, commit }
+  }
   const remoteBefore = await tip()
   if (kind === 'push') {
     if (remoteBefore.sha !== candidate.head) throw new Error('REMOTE_PARENT_CHANGED')

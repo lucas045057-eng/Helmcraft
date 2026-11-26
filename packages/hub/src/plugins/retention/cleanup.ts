@@ -1,10 +1,13 @@
+import { eq, inArray } from 'drizzle-orm'
 import type { Repos, TaskStore } from '../../services/store.js'
+import { runArtifacts } from '../store-sqlite/schema.js'
 
 export const dayMs = 86_400_000
 const terminalRuns = "('succeeded','failed','timed_out','cancelled','refused','lost')"
 const terminalTasks = "('succeeded','rejected','failed','timed_out','cancelled')"
+export interface ArtifactUnlink { id: string; storageRelPath: string }
 
-export function purgeLogSlice(db: Repos, now: number, days: { succeeded: number; other: number }, limit: number) {
+export function purgeLogSlice(db: Repos, now: number, days: { succeeded: number; other: number }, limit: number, unlinks?: ArtifactUnlink[]) {
   const row = db.prepare(`SELECT r.id FROM task_runs r JOIN tasks t ON t.id = r.task_id
     WHERE r.logs_purged_at IS NULL AND r.status IN ${terminalRuns} AND r.finished_at < ?
       AND NOT EXISTS (SELECT 1 FROM personal_projects p WHERE p.plan_task_id=t.id AND p.phase NOT IN ('done','stopped'))
@@ -16,12 +19,20 @@ export function purgeLogSlice(db: Repos, now: number, days: { succeeded: number;
   const deleted = db.prepare('DELETE FROM task_logs WHERE id IN (SELECT id FROM task_logs WHERE run_id=? LIMIT ?)').run(row.id, limit).changes
   if (deleted >= limit) return deleted
   const snapshots = db.prepare('DELETE FROM run_board_snapshots WHERE rowid IN (SELECT rowid FROM run_board_snapshots WHERE run_id=? AND NOT EXISTS (SELECT 1 FROM workspace_pointers WHERE last_attempt_run_id=? OR last_accepted_run_id=?) LIMIT ?)').run(row.id, row.id, row.id, limit - deleted).changes
-  if (deleted + snapshots < limit) db.prepare('UPDATE task_runs SET logs_purged_at=? WHERE id=?').run(now, row.id)
-  return deleted + snapshots
+  if (deleted + snapshots >= limit) return deleted + snapshots
+  const artBudget = limit - deleted - snapshots
+  const artRows = db.select({ id: runArtifacts.id, storageRelPath: runArtifacts.storageRelPath })
+    .from(runArtifacts).where(eq(runArtifacts.runId, row.id)).limit(artBudget).all()
+  if (artRows.length) {
+    db.delete(runArtifacts).where(inArray(runArtifacts.id, artRows.map(a => a.id))).run()
+    unlinks?.push(...artRows)
+  }
+  if (deleted + snapshots + artRows.length < limit) db.prepare('UPDATE task_runs SET logs_purged_at=? WHERE id=?').run(now, row.id)
+  return deleted + snapshots + artRows.length
 }
 
 // Drain dependants first. A single old task can have more children than the entire slice budget.
-function purgeTask(db: Repos, cutoff: number, limit: number) {
+function purgeTask(db: Repos, cutoff: number, limit: number, unlinks?: ArtifactUnlink[]) {
   const task = db.prepare(`SELECT t.id FROM tasks t WHERE t.finished_at < ? AND t.status IN ${terminalTasks}
     AND NOT EXISTS (SELECT 1 FROM personal_projects p WHERE p.plan_task_id=t.id AND p.phase NOT IN ('done','stopped'))
     AND NOT EXISTS (SELECT 1 FROM personal_steps s JOIN personal_projects p ON p.id=s.project_id WHERE s.task_id=t.id AND p.phase NOT IN ('done','stopped'))
@@ -31,6 +42,13 @@ function purgeTask(db: Repos, cutoff: number, limit: number) {
     ORDER BY t.finished_at LIMIT 1`).get(cutoff, cutoff, cutoff) as { id: string } | undefined
   if (!task) return 0
   let remaining = limit
+  const artRows = db.select({ id: runArtifacts.id, storageRelPath: runArtifacts.storageRelPath })
+    .from(runArtifacts).where(eq(runArtifacts.taskId, task.id)).limit(remaining).all()
+  if (artRows.length) {
+    remaining -= db.delete(runArtifacts).where(inArray(runArtifacts.id, artRows.map(a => a.id))).run().changes
+    unlinks?.push(...artRows)
+    if (remaining <= 0) return limit
+  }
   for (const table of ['input_requests', 'feishu_messages', 'task_runs']) {
     if (table === 'task_runs') {
       for (const prefix of ['last_attempt', 'last_accepted']) {
@@ -55,6 +73,7 @@ function purgeTask(db: Repos, cutoff: number, limit: number) {
 const auxiliary = [
   ['audit_logs', 'ts', 365], ['feishu_event_dedupe', 'received_at', 7], ['idempotency_keys', 'created_at', 1],
   ['dashboard_sessions', 'expires_at', 7], ['enroll_tokens', 'expires_at', 7],
+  ['feishu_proposals', 'expires_at', 7], ['project_briefings', 'created_at', 90],
 ] as const
 
 export function incrementalVacuum(db: Repos, pages = 2000) {
@@ -68,10 +87,14 @@ export function cleanup(store: TaskStore, now: number, config: { sliceRows: numb
   const factor = store.retention.storageLevel === 'ok' ? 1 : 0.5
   const days = { succeeded: retentionDays.succeeded * factor, other: retentionDays.other * factor }
   const metrics = store.retention
-  metrics.retentionDeletedRowsTotal += store.tx(db => purgeLogSlice(db, now, days, sliceRows))
-  metrics.retentionDeletedRowsTotal += store.tx(db => purgeTask(db, now - 365 * dayMs, sliceRows))
-  for (const [table, column, days] of auxiliary) {
+  const logUnlinks: ArtifactUnlink[] = []
+  metrics.retentionDeletedRowsTotal += store.tx(db => purgeLogSlice(db, now, days, sliceRows, logUnlinks))
+  for (const row of logUnlinks) store.artifacts.unlink(row)
+  const taskUnlinks: ArtifactUnlink[] = []
+  metrics.retentionDeletedRowsTotal += store.tx(db => purgeTask(db, now - 365 * dayMs, sliceRows, taskUnlinks))
+  for (const row of taskUnlinks) store.artifacts.unlink(row)
+  for (const [table, column, retentionDaysVal] of auxiliary) {
     metrics.retentionDeletedRowsTotal += store.repos.prepare(`DELETE FROM ${table} WHERE rowid IN
-      (SELECT rowid FROM ${table} WHERE ${column} < ? LIMIT ?)`).run(now - days * dayMs, sliceRows).changes
+      (SELECT rowid FROM ${table} WHERE ${column} < ? LIMIT ?)`).run(now - retentionDaysVal * dayMs, sliceRows).changes
   }
 }

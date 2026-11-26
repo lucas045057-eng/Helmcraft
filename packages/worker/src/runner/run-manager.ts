@@ -1,7 +1,7 @@
 import { stripVTControlCharacters } from 'node:util'
 import { createHash } from 'node:crypto'
 import { scanManifest } from '../harness/manifest.js'
-import { sensitivePaths } from '../harness/tamper.js'
+import { sensitivePaths, inspectCommandFiles } from '../harness/tamper.js'
 import { verifyAttempt } from '../harness/verify-runner.js'
 import { aggregateRound, nextRepair, type CliOutcome } from '../harness/autofix.js'
 import { composeRun } from '../harness/compose-run.js'
@@ -11,20 +11,21 @@ import { join } from 'node:path'
 import { mapWorkspaceFile, projectBoardRoot, resolveWorkspaceSubdir, withinWorkspace, workspaceSubdirPath } from '../security/workspace.js'
 import { boundLogLine, createRedactor, Lru, NdjsonLineSplitter, ulid } from '@agent-hub/common'
 import type { Clock, SplitLine } from '@agent-hub/common'
-import type { CmdAckPayload, RunCancel, RunDispatch, RunInput, RunResumeState, VerificationSummary } from '@agent-hub/protocol'
+import type { CmdAckPayload, ProjectPreflight, ProjectRebaseline, RunCancel, RunDispatch, RunInput, RunResumeState, VerificationSummary, VerifyCommandResult } from '@agent-hub/protocol'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { WorkerConfig } from '../config/schema.js'
 import type { ParsedItem, OutputParser, Invocation } from '../adapters/types.js'
 import { effectiveProfile } from '../security/profile.js'
 import { buildEnvironment } from '../security/env.js'
 import { filterExtraArgs } from '../security/args.js'
-import { assertBinding, personalBinding } from '../personal/preflight.js'
+import { assertBinding, flexibleBinding, flexiblePreflight, isCommandBoundToProject, personalBinding, preflight } from '../personal/preflight.js'
 import { checkPersonalRole, personalInvocation } from '../personal/roles.js'
 import { PersonalResult } from '../personal/result.js'
 import { preparePlan } from '../personal/plan.js'
-import { planBaseline, requiredCommands } from '../personal/execution.js'
+import { computeChecksDigest, computeLegacyChecksDigest, planBaseline, requiredCommands } from '../personal/execution.js'
 import { checkedCandidate, roleInput } from '../personal/review-input.js'
 import { deliver, observeDelivery } from '../personal/delivery.js'
+import { isVisualShotFailed, resolveVisualConfig, runVisualCheck, visualFailureTail, type VisualBackend } from '../harness/visual-runner.js'
 import { type AdapterRegistry } from '../adapters/registry.js'
 import { RunOutbox } from '../tunnel/outbox.js'
 import { trackProcessTree } from './kill-tree.js'
@@ -32,7 +33,7 @@ import type { ProcessTree } from './kill-tree.js'
 import { Journal } from './journal.js'
 import { LocalLog, LocalLogStream } from './local-log.js'
 import { spawnRun, writePrompt } from './spawn.js'
-import { createRunTempDir, recoverRunTempFiles, removeRunTempDir, writeRunTempFiles } from './temp-files.js'
+import { createRunTempDir, recoverRunTempFiles, removeRunTempDir, stageRunAttachments, writeRunTempFiles } from './temp-files.js'
 
 type Code = NonNullable<CmdAckPayload['error']>['code']
 type StopReason = 'TIMEOUT' | 'IDLE_TIMEOUT' | 'INPUT_TIMEOUT' | 'CANCELLED' | 'WORKER_SHUTDOWN'
@@ -75,7 +76,8 @@ export class RunManager {
   localDrain = false
   constructor(private config: WorkerConfig, private readonly registry: AdapterRegistry,
     private readonly clock: Clock, private readonly journal: Journal, private readonly logRoot: string,
-    private readonly warn: (message: string, code?: string) => void, private readonly tempRoot = join(logRoot, '.tmp')) {
+    private readonly warn: (message: string, code?: string) => void, private readonly tempRoot = join(logRoot, '.tmp'),
+    private readonly visualBackend?: VisualBackend) {
     this.completed = new Lru(10_000, Infinity, clock)
     this.deliveredInputs = new Lru(10_000, 3_600_000, clock)
     this.outbox = new RunOutbox(clock, config.tunnel, id => {
@@ -113,7 +115,7 @@ export class RunManager {
     return plan.activate()
   }
   private recordAcceptance(command: RunDispatch, workspaceRoot: string) {
-    if (command.personal?.projectId) this.journal.projectOccupation.claim(workspaceRoot, command.personal.projectId)
+    if (command.personal?.projectId) this.journal.projectOccupation.claim(command.personal.binding.root ?? workspaceRoot, command.personal.projectId)
     this.journal.accepted({ runId: command.runId, taskId: command.taskId, workspaceId: command.workspaceId, workspaceRoot })
   }
   // An in-process reservation claims the slot synchronously. Its launch owns all I/O.
@@ -155,17 +157,20 @@ export class RunManager {
           personal.repair || personal.gate || !!command.harness !== (personal.delivery.kind === 'verify_final'))) throw new Error('Invalid delivery')
         if (personal.repair && !personal.execution) throw new Error('Missing repair baseline')
         if (personal.execution && (!personal.projectId || personal.role !== 'main' || personal.planSources ||
-          !command.harness?.verify || !this.config.harness.enabled)) throw new Error('Invalid item execution')
+          (!command.harness?.verify && !personal.noChecks) || !this.config.harness.enabled)) throw new Error('Invalid item execution')
         if (personal.planSources && (personal.role !== 'main' || command.harness)) throw new Error('Invalid plan dispatch')
-        if (profile.effectiveProfile !== command.profile || (personal.role !== 'main' && command.harness) ||
+        if ((personal.binding.mode !== 'flexible' && profile.effectiveProfile !== command.profile) || (personal.role !== 'main' && command.harness) ||
           command.harness?.verify?.autoFixMaxRetries) throw new Error('Invalid role profile')
-        assertBinding(personal.binding, personalBinding(this.config, workspace.id, this.registry))
+        const expected = personal.binding.mode === 'flexible'
+          ? flexibleBinding(this.config, workspace.id, this.registry, personal.binding)
+          : personalBinding(this.config, workspace.id, this.registry)
+        assertBinding(personal.binding, expected)
       } catch { throw new WorkerError('INVALID', 'Personal role or repository binding rejected') }
     }
     checkBinding()
     if (profile.effectiveProfile !== 'readonly') {
       this.checkWriter(workspace.id, workspace.path)
-      if (!this.journal.projectOccupation.permits(workspace.path, personal?.projectId)) throw new WorkerError('WORKSPACE_BUSY', 'PROJECT_OCCUPIED')
+      if (!this.journal.projectOccupation.permits(personal?.binding.root ?? workspace.path, personal?.projectId)) throw new WorkerError('WORKSPACE_BUSY', 'PROJECT_OCCUPIED')
     }
     const other = [...this.active.values()].filter(run => run.command.workspaceId === workspace.id ||
       (profile.effectiveProfile !== 'readonly' &&
@@ -185,7 +190,7 @@ export class RunManager {
         delete input.resumeSessionId
         if (repair.resume) input.resumeSessionId = repair.resume
       }
-      return personal ? personalInvocation(personal.role, adapter, input, !!personal.planSources || personal.gate?.kind === 'debug') : adapter.buildInvocation(input)
+      return personal ? personalInvocation(personal.role, adapter, input, !!personal.planSources || personal.gate?.kind === 'debug', personal.binding) : adapter.buildInvocation(input)
     }
     const invocation = build(command.prompt)
     const reservedEnv = new Set(Object.keys(invocation.env).map(key => key.toUpperCase()))
@@ -234,20 +239,52 @@ export class RunManager {
     if (stopped()) return
     const session = run.harness
     const workspace = run.command.workspaceId
+    const personalRoot = run.command.personal?.binding.root ?? root
+    const flexiblePersonal = run.command.personal?.binding.mode === 'flexible'
+    const workspaceMeta = this.config.workspaces.find(ws => ws.id === workspace)!
+    const localHarness = workspaceMeta.harness
+    const visualConfig = resolveVisualConfig(localHarness.visual, run.command.subdir)
+    const visualEligible = !!session && session.applied.trust === 'owner' && !run.command.personal &&
+      !workspaceMeta.configExposed && run.profile.effectiveProfile !== 'readonly' &&
+      visualConfig.enabled && !!visualConfig.url
+    const baselineOpts = {
+      ...(run.command.personal?.binding.mode && { mode: run.command.personal.binding.mode }),
+      ...(run.command.personal?.binding.autoCommit !== undefined && { autoCommit: run.command.personal.binding.autoCommit }),
+      ...(run.command.personal?.inlinePrompt !== undefined && { inlinePrompt: run.command.personal.inlinePrompt }),
+      ...(run.command.personal?.expectedTree !== undefined && { expectedTree: run.command.personal.expectedTree }),
+    }
     // 黑板与 AGENTS.md 跟着项目走：任务在项目文件夹（Forma、Forma/src）里时用 Forma/.board，否则用工作区根目录
     const boardRoot = projectBoardRoot(root, run.command.subdir)
-    const localHarness = this.config.workspaces.find(ws => ws.id === workspace)!.harness
+    const personalVerifyCommands = flexiblePersonal && personalRoot !== root
+      ? localHarness.verify.commands.filter(c => isCommandBoundToProject(root, personalRoot, c))
+      : localHarness.verify.commands
     const execution = run.command.personal?.execution
     let verificationConfig = localHarness.verify
     if (execution) {
       try {
-        planBaseline(root, execution, !run.command.personal?.repair)
-        verificationConfig = { ...verificationConfig, commands: requiredCommands(execution, verificationConfig.commands) }
-      } catch {
+        planBaseline(personalRoot, execution, !run.command.personal?.repair, baselineOpts)
+        verificationConfig = { ...verificationConfig, commands: requiredCommands(execution, personalVerifyCommands, flexiblePersonal && !!run.command.personal?.noChecks, root) }
+      } catch (err) {
+        const msg = err instanceof Error && err.message === 'CHECKS_REBASELINE_REQUIRED'
+          ? 'CHECKS_REBASELINE_REQUIRED'
+          : 'PROJECT_BASELINE_OR_REQUIRED_CHECK_CHANGED'
         this.finish(run, { kind: 'finished', status: 'failed', errorCode: 'ADAPTER_ERROR', exitCode: null, signal: null,
-          durationMs: Math.floor(this.clock.monotonic() - run.started), summary: 'PROJECT_BASELINE_OR_REQUIRED_CHECK_CHANGED' })
+          durationMs: Math.floor(this.clock.monotonic() - run.started), summary: msg })
         return
       }
+    }
+    const effectiveVisual: typeof localHarness.visual = { ...localHarness.visual, subdirOverrides: {} }
+    if (visualEligible && visualConfig.startCommand) effectiveVisual.startCommand = visualConfig.startCommand
+    else delete effectiveVisual.startCommand
+    const effectiveHarness: typeof localHarness = {
+      ...localHarness,
+      verify: {
+        ...localHarness.verify,
+        commands: run.command.personal
+          ? (execution ? verificationConfig.commands : [])
+          : (session?.applied.verify ? verificationConfig.commands : []),
+      },
+      visual: effectiveVisual,
     }
     let plan: ReturnType<typeof preparePlan> | undefined
     let gate: ReturnType<typeof roleInput> | undefined
@@ -257,10 +294,12 @@ export class RunManager {
       try {
         checkBinding()
         this.checkWriter(workspace, root)
-        if (!this.journal.projectOccupation.permits(root,run.command.personal.projectId)) throw new Error('PROJECT_OCCUPIED')
-        const commands = requiredCommands(action.spec, localHarness.verify.commands)
+        if (!this.journal.projectOccupation.permits(personalRoot, run.command.personal.projectId)) throw new Error('PROJECT_OCCUPIED')
+        const commands = requiredCommands(action.spec, personalVerifyCommands, flexiblePersonal && !!run.command.personal?.noChecks, root)
         const verified = await deliver(run.command.personal.binding, action, run.abort.signal, checkBinding, async () => {
+          if (!commands.length && flexiblePersonal && run.command.personal?.noChecks) return
           if (!session?.applied.verify) throw new Error('CORE_CHECKS_UNAVAILABLE')
+          requiredCommands(action.spec, personalVerifyCommands, false, root)
           const confirm = this.journal.verificationHolds.begin(id, workspace, root)
           run.pauseIdle = true
           const result = await verifyAttempt({ clock:this.clock, root, runId:id, deadline:run.started+run.command.timeoutMs,
@@ -271,7 +310,8 @@ export class RunManager {
           verification = result.summary
           if (!result.cleanupUnconfirmed) confirm()
           if (result.cleanupUnconfirmed || verification.status !== 'passed') throw new Error('FINAL_CHECKS_NOT_PASSED')
-        })
+          requiredCommands(action.spec, personalVerifyCommands, false, root)
+        }, run.command.personal.inlinePrompt)
         const summary = JSON.stringify({...verified,kind:action.kind,itemId:action.spec.item.id,taskId:run.command.taskId,runId:id})
         this.finish(run,{kind:'finished',status:'succeeded',exitCode:0,signal:null,summary,personalResultDigest:createHash('sha256').update(summary).digest('hex'),
           durationMs:Math.floor(this.clock.monotonic()-run.started),...(verification && {verification})})
@@ -287,21 +327,30 @@ export class RunManager {
     if (run.command.personal?.gate) {
       try {
         checkBinding()
-        requiredCommands(run.command.personal.gate.spec,localHarness.verify.commands)
-        gate = roleInput(root,run.command)
+        requiredCommands(run.command.personal.gate.spec, personalVerifyCommands, flexiblePersonal && !!run.command.personal?.noChecks, root)
+        gate = roleInput(personalRoot, run.command)
         invocation = build(gate.prompt)
-      } catch {
+      } catch (err) {
+        const msg = err instanceof Error && err.message === 'CHECKS_REBASELINE_REQUIRED'
+          ? 'CHECKS_REBASELINE_REQUIRED'
+          : 'Complete role input or repository binding unavailable'
         this.finish(run,{ kind:'finished',status:'failed',errorCode:'ADAPTER_ERROR',exitCode:null,signal:null,
-          durationMs:Math.floor(this.clock.monotonic()-run.started),summary:'Complete role input or repository binding unavailable' })
+          durationMs:Math.floor(this.clock.monotonic()-run.started),summary:msg })
         return
       }
     }
     if (run.command.personal?.planSources) {
       try {
         checkBinding()
-        const checks = localHarness.verify.commands
-        plan = preparePlan(root, run.command.personal.planSources, checks.map(c => c.id),
-          createHash('sha256').update(JSON.stringify(checks)).digest('hex'))
+        const checks = personalVerifyCommands
+        plan = preparePlan(personalRoot, run.command.personal.planSources, checks.map(c => c.id),
+          computeChecksDigest(root, checks), {
+            ...(run.command.personal.binding.mode && { mode: run.command.personal.binding.mode }),
+            ...(run.command.personal.binding.autoCommit !== undefined && { autoCommit: run.command.personal.binding.autoCommit }),
+            ...(run.command.personal.inlinePrompt !== undefined && { inlinePrompt: run.command.personal.inlinePrompt }),
+            ...(run.command.personal.boardContext !== undefined && { boardContext: run.command.personal.boardContext }),
+            ...(run.command.personal.methodBlock !== undefined && { methodBlock: run.command.personal.methodBlock }),
+          })
         invocation = build(plan.prompt)
       } catch {
         this.finish(run, { kind: 'finished', status: 'failed', errorCode: 'ADAPTER_ERROR', exitCode: null, signal: null,
@@ -309,6 +358,44 @@ export class RunManager {
         return
       }
     }
+    let stagedTempDir: string | undefined
+    let effectiveCommand = run.command
+    if (!session?.round && run.command.attachments?.length && !run.command.personal) {
+      try {
+        stagedTempDir = createRunTempDir(this.tempRoot)
+        const staged = stageRunAttachments(stagedTempDir, run.command.attachments)
+        const lines = ['[用户附件（已暂存到本地临时目录，请直接查看或分析以下文件）]',
+          ...staged.map(a => `- ${a.kind} (${a.mimeType}) ${a.name}: ${a.path}`)]
+        const annotatedPrompt = run.command.prompt + '\n\n' + lines.join('\n')
+        effectiveCommand = { ...run.command, prompt: annotatedPrompt }
+        invocation = build(annotatedPrompt)
+      } catch {
+        if (stagedTempDir) removeRunTempDir(stagedTempDir)
+        this.finish(run, { kind: 'finished', status: 'failed', errorCode: 'ADAPTER_ERROR', exitCode: null, signal: null, durationMs: 0, summary: 'Failed to stage run attachments' })
+        return
+      }
+    }
+    let visualHeld = false
+    const visualCtx = () => ({
+      root, runId: id, clock: this.clock, signal: run.abort.signal, force: run.grace.signal,
+      warn: this.warn, journal: this.journal, useJobObject: this.config.security.useJobObject,
+      patterns: this.patterns, knownSecrets,
+      beginHold: () => this.journal.verificationHolds.begin(id, workspace, root),
+      onCleanupUnconfirmed: () => { visualHeld = true },
+    })
+    const emitVisual = (vis: Omit<Extract<Parameters<RunOutbox['push']>[1], { kind: 'visual' }>, 'seq' | 'ts'>) => {
+      if (vis.shots.length <= 1) {
+        this.outbox.push(id, vis)
+        return
+      }
+      const failedFlags = vis.shots.map(shot => isVisualShotFailed(shot, visualConfig))
+      const preserveGroupFailure = vis.status === 'failed' && !failedFlags.some(Boolean)
+      for (const [i, shot] of vis.shots.entries()) {
+        const shotFailed = preserveGroupFailure || failedFlags[i]!
+        this.outbox.push(id, { ...vis, status: shotFailed ? 'failed' : 'passed', shots: [shot] })
+      }
+    }
+    let preVisual: Omit<Extract<Parameters<RunOutbox['push']>[1], { kind: 'visual' }>, 'seq' | 'ts'> | undefined
     const probe = this.registry.get(run.command.adapter)!
     if (session && !session.round) {
       try {
@@ -316,25 +403,36 @@ export class RunManager {
         session.writerActive = [...this.active.values()].some(other => other.command.workspaceId === workspace && other.profile.effectiveProfile !== 'readonly')
         if (session.applied.board !== 'off') {
           session.pre = await readBoard(boardRoot, knownSecrets, this.patterns)
-          if (stopped()) return
+          if (stopped()) { if (stagedTempDir) removeRunTempDir(stagedTempDir); return }
           if (session.applied.bootstrap && session.pre.dir === 'unsafe') {
             session.applied.bootstrap = false
             session.applied.downgrades.push({ field: 'bootstrap', reason: 'BOARD_UNSAFE' })
           }
         }
-        if (session.applied.verify || (run.profile.effectiveProfile === 'readonly' && localHarness.manifest.readonlyCheck)) {
-          session.sensitive = sensitivePaths(root, localHarness)
-          session.manifest = await scanManifest(root, localHarness.manifest, session.sensitive)
-          if (stopped()) return
+        if (session.applied.verify || visualEligible || (!!execution && flexiblePersonal && !!run.command.personal?.noChecks) || (run.profile.effectiveProfile === 'readonly' && localHarness.manifest.readonlyCheck)) {
+          session.sensitive = sensitivePaths(root, effectiveHarness)
+          const preCmd = inspectCommandFiles(root, effectiveHarness)
+          session.pinnedPaths = preCmd.paths
+          session.manifest = await scanManifest(root, effectiveHarness.manifest, session.sensitive, session.pinnedPaths, preCmd.unbaselined)
+          if (stopped()) { if (stagedTempDir) removeRunTempDir(stagedTempDir); return }
         }
         if (session.applied.verify) session.verifyCommandIds = verificationConfig.commands.map(c => c.id)
         const agents = session.pre?.agentsMd ?? await readAgentsMd(boardRoot)
-        if (stopped()) return
-        const prompt = composeRun(run.command, session, boardRoot, cwd, agents, this.clock.now())
+        if (stopped()) { if (stagedTempDir) removeRunTempDir(stagedTempDir); return }
+        const prompt = composeRun(effectiveCommand, session, boardRoot, cwd, agents, this.clock.now())
         if (prompt !== undefined) invocation = build(prompt)
       } catch {
+        if (stagedTempDir) removeRunTempDir(stagedTempDir)
         this.finish(run, { kind: 'finished', status: 'failed', errorCode: 'ADAPTER_ERROR', exitCode: null, signal: null, durationMs: 0, summary: 'Harness preparation failed' })
         return
+      }
+      if (visualEligible && visualConfig.captureBefore) {
+        if (session.manifest && !session.manifest.summary.truncated) {
+          preVisual = await runVisualCheck(visualCtx(), visualConfig, 'before', this.visualBackend)
+          if (stopped()) { if (stagedTempDir) removeRunTempDir(stagedTempDir); return }
+        } else {
+          preVisual = { kind: 'visual', phase: 'before', status: 'skipped', reason: 'MANIFEST_INCOMPLETE', shots: [] }
+        }
       }
     }
     let lineRedactor = createRedactor(knownSecrets, this.patterns)
@@ -363,7 +461,7 @@ export class RunManager {
       catch { this.warn('Run reported a file outside the workspace', 'PATH_REJECTED'); return '<outside-workspace>' }
     }
     const logLimit = Math.min(16 * 1024, this.maxLogEntryBytes)
-    const personalResult = run.command.personal && new PersonalResult(run.command.personal.role)
+    const personalResult = run.command.personal && new PersonalResult(run.command.personal.role, run.command.adapter, flexiblePersonal)
     const stdout = new NdjsonLineSplitter(personalResult ? 256 * 1024 : Math.max(1, logLimit - 64))
     const stderr = new NdjsonLineSplitter(Math.max(1, logLimit - 64))
     const stderrDecoder = stderrEncoding === 'gbk' ? new TextDecoder('gbk') : undefined
@@ -379,7 +477,7 @@ export class RunManager {
     const fullOut = new LocalLogStream(localFilter(), append)
     const fullErr = new LocalLogStream(localFilter(), append)
     let spawnError = false
-    let tempDir: string | undefined
+    let tempDir: string | undefined = stagedTempDir
     let stopParserTimer: (() => void) | undefined
     let cliExited = false
     let stopAtExit: StopReason | undefined
@@ -445,43 +543,86 @@ export class RunManager {
         if (round && finished.status !== 'succeeded') {
           this.outbox.push(id, { kind: 'log', stream: 'system', text: 'Repair round ' + round + ' ended with ' + (code ?? signal ?? finished.status) })
         }
-        const event = await capturePost(session, root, localHarness, knownSecrets, this.patterns, run.profile.effectiveProfile,
+        const event = await capturePost(session, root, effectiveHarness, knownSecrets, this.patterns, run.profile.effectiveProfile,
           () => (this.writeEpoch.get(workspace) ?? 0) !== session.epochPre, boardRoot)
         const post = event.board
         this.outbox.push(id, event)
+        let afterVisual: Omit<Extract<Parameters<RunOutbox['push']>[1], { kind: 'visual' }>, 'seq' | 'ts'> | undefined
+        if (visualEligible && aggregate.status === 'succeeded' && !event.tamper && !!event.changes &&
+            !event.changes.truncated && !(round === 0 && (!event.changes.total || event.changes.boardOnly)) && !interrupted()) {
+          run.grace = new AbortController()
+          afterVisual = await runVisualCheck(visualCtx(), visualConfig, 'after', this.visualBackend)
+          emitVisual(afterVisual)
+        }
         if (requested && aggregate.status === 'succeeded') {
-          if (execution) { checkBinding(); planBaseline(root, execution, false) }
-          if (!session.applied.verify) verification = { status: 'skipped', reason: session.applied.downgrades.some(d => d.reason === 'CONFIG_EXPOSED') ? 'CONFIG_EXPOSED' : 'NO_COMMANDS', attempts, failed: [] }
-          else if (!event.changes || event.changes.truncated) verification = { status: 'unverified', reason: 'MANIFEST_INCOMPLETE', attempts, failed: [] }
+          if (execution) { checkBinding(); planBaseline(personalRoot, execution, false, baselineOpts) }
+          if (execution && flexiblePersonal && run.command.personal?.noChecks && !session.applied.verify) {
+            if (event.tamper) verification = { status: 'skipped', reason: 'TAMPER_RISK', attempts, failed: [] }
+            else if (!event.changes || event.changes.truncated) verification = { status: 'unverified', reason: 'MANIFEST_INCOMPLETE', attempts, failed: [] }
+            else {
+              const candidate = checkedCandidate(personalRoot)
+              if (candidate.head !== execution.head) throw new Error('CANDIDATE_CHANGED')
+              aggregate.testedCandidate = candidate
+              verification = { status: 'skipped', reason: 'NO_COMMANDS', attempts: 0, failed: [] }
+            }
+          } else if (!session.applied.verify && afterVisual?.status !== 'failed') {
+            verification = afterVisual?.status === 'passed'
+              ? { status: 'passed', attempts: attempts + 1, failed: [] }
+              : { status: 'skipped', reason: session.applied.downgrades.some(d => d.reason === 'CONFIG_EXPOSED') ? 'CONFIG_EXPOSED' : 'NO_COMMANDS', attempts, failed: [] }
+          } else if (!event.changes || event.changes.truncated) verification = { status: 'unverified', reason: 'MANIFEST_INCOMPLETE', attempts, failed: [] }
           else if (event.tamper) verification = { status: 'skipped', reason: 'TAMPER_RISK', attempts, failed: [] }
           else if (round === 0 && (!event.changes.total || event.changes.boardOnly)) verification = { status: 'skipped', reason: 'NO_CHANGES', attempts, failed: [] }
           else if (!interrupted()) {
-            const candidate = execution ? checkedCandidate(root) : undefined
+            const candidate = execution ? checkedCandidate(personalRoot) : undefined
             attempts++
             checkpoint()
             run.grace = new AbortController()
-            const confirmCleanup = this.journal.verificationHolds.begin(id, workspace, root)
-            verificationHeld = true
-            const { summary, results, cleanupUnconfirmed } = await verifyAttempt({ clock: this.clock, root, runId: id, deadline, signal: run.abort.signal,
-              force: run.grace.signal, warn: this.warn, knownSecrets, patterns: this.patterns, journal: this.journal, useJobObject: this.config.security.useJobObject,
-              emit: ev => this.outbox.push(id, ev), log: (stream, text) => {
-                append(text + '\n')
-                this.outbox.push(id, { kind: 'log', stream, ...boundLogLine({ text }, logLimit) })
-              } }, verificationConfig, attempts)
-            if (!cleanupUnconfirmed) {
-              confirmCleanup()
-              verificationHeld = false
+            let summary: VerificationSummary
+            let results: VerifyCommandResult[]
+            if (session.applied.verify) {
+              const confirmCleanup = this.journal.verificationHolds.begin(id, workspace, root)
+              verificationHeld = true
+              const ran = await verifyAttempt({ clock: this.clock, root, runId: id, deadline, signal: run.abort.signal,
+                force: run.grace.signal, warn: this.warn, knownSecrets, patterns: this.patterns, journal: this.journal, useJobObject: this.config.security.useJobObject,
+                emit: ev => this.outbox.push(id, ev), log: (stream, text) => {
+                  append(text + '\n')
+                  this.outbox.push(id, { kind: 'log', stream, ...boundLogLine({ text }, logLimit) })
+                } }, verificationConfig, attempts)
+              summary = ran.summary
+              results = ran.results
+              if (!ran.cleanupUnconfirmed) {
+                confirmCleanup()
+                verificationHeld = false
+              }
+            } else {
+              summary = { status: 'passed', attempts, failed: [] }
+              results = []
+            }
+            if (!execution && afterVisual?.status === 'failed') {
+              const visualResult: VerifyCommandResult = {
+                id: 'visual-check', status: 'failed', exitCode: 1, signal: null,
+                durationMs: afterVisual.shots.reduce((sum, s) => sum + s.durationMs, 0),
+                tail: visualFailureTail({ seq: 1, ts: this.clock.now(), ...afterVisual }),
+              }
+              results = [...results, visualResult]
+              if (summary.status === 'passed') summary = { status: 'failed', attempts, failed: ['visual-check'] }
+              else if (!summary.failed.includes('visual-check')) summary.failed.push('visual-check')
             }
             try { local?.flush() } catch { this.warn('Local verification log flush failed') }
             verification = summary
             if (execution && candidate) {
               checkBinding()
-              planBaseline(root, execution, false)
+              planBaseline(personalRoot, execution, false, baselineOpts)
               if (candidate.head !== execution.head) throw new Error('CANDIDATE_CHANGED')
-              checkedCandidate(root, candidate)
+              checkedCandidate(personalRoot, candidate)
               aggregate.testedCandidate = candidate
             }
-            const facts = !verificationHeld && nextRepair(summary, results, event.changes, round, session.applied.autoFixMaxRetries, deadline - this.clock.monotonic(), run.command.timeoutMs)
+            const visualOnlyMaxRetries = !session.applied.verify
+              ? (session.applied.trust === 'owner'
+                ? Math.min(localHarness.verify.maxAutoFixRetries, run.command.harness?.verify?.autoFixMaxRetries ?? 0)
+                : 0)
+              : session.applied.autoFixMaxRetries
+            const facts = !(verificationHeld || visualHeld) && nextRepair(summary, results, event.changes, round, visualOnlyMaxRetries, deadline - this.clock.monotonic(), run.command.timeoutMs)
             if (facts && !interrupted()) {
               const resume = probe.adapter?.features.resume && aggregate.cliSessionId && !aggregate.cliSessionId.startsWith('-') ? aggregate.cliSessionId : undefined
               const repairBoard = !resume && session.applied.board !== 'off' ? await readBoard(boardRoot, knownSecrets, this.patterns) : post
@@ -494,7 +635,7 @@ export class RunManager {
                 run.pauseIdle = false
                 run.lastOutput = this.clock.monotonic()
                 run.grace = new AbortController()
-                await this.launch(run, next, build, root, cwd, env, knownSecrets, probe.adapter!.createParser(), liveInput, cliVersion, stderrEncoding)
+                await this.launch(run, next, build, root, cwd, env, knownSecrets, probe.adapter!.createParser(), liveInput, cliVersion, stderrEncoding, checkBinding)
                 return
               }
             }
@@ -505,7 +646,7 @@ export class RunManager {
         this.warn('Harness post capture, verification or journal write failed')
         if (requested && aggregate.status === 'succeeded') verification = interrupted() ?? { status: 'unverified', reason: 'INTERNAL', attempts, failed: [] }
       }
-      if (verificationHeld) {
+      if (verificationHeld || visualHeld) {
         this.outbox.push(id, { kind: 'log', stream: 'system', text: 'VERIFY_CLEANUP_UNCONFIRMED: workspace quarantined; new writers blocked' })
       }
       if (round && verification && !verification.autoFix) {
@@ -551,11 +692,11 @@ export class RunManager {
       if (verified !== cwd) throw new Error('Working directory changed before spawn')
       checkBinding()
       if (run.profile.effectiveProfile !== 'readonly') this.checkWriter(run.command.workspaceId, root)
-      if (run.profile.effectiveProfile !== 'readonly' && !this.journal.projectOccupation.permits(root, run.command.personal?.projectId)) {
+      if (run.profile.effectiveProfile !== 'readonly' && !this.journal.projectOccupation.permits(personalRoot, run.command.personal?.projectId)) {
         throw new WorkerError('WORKSPACE_BUSY', 'PROJECT_OCCUPIED')
       }
       if (invocation.tempFiles?.length) {
-        tempDir = createRunTempDir(this.tempRoot)
+        tempDir ??= createRunTempDir(this.tempRoot)
         writeRunTempFiles(tempDir, invocation, env)
       }
       const child = spawnRun(invocation, verified, env)
@@ -622,6 +763,7 @@ export class RunManager {
           commandSummary: freshScrub(run.command.adapter + (clampedFrom ? ' (profile clamped)' : '')) })
         started = true
         if (session && !session.round) this.outbox.push(id, { kind: 'harness', ...(session.manifest && { manifest: session.manifest.summary }), applied: session.applied, ...(session.pre && { board: session.pre }), ...(session.prompt && { prompt: session.prompt }) })
+        if (preVisual) emitVisual(preVisual)
         writePrompt(child, invocation.stdin, liveInput)
       }
       child.stdout.on('data', (chunk: Buffer) => {
@@ -710,11 +852,56 @@ export class RunManager {
       throw new WorkerError('WORKSPACE_BUSY', 'VERIFY_CLEANUP_UNCONFIRMED: workspace held pending cleanup confirmation')
     }
   }
-  releaseProject({projectId,workspaceId,root}: {projectId:string; workspaceId:string; root:string}) {
+  async preflightProject(payload: ProjectPreflight) {
+    try {
+      if (payload.mode === 'strict') {
+        const binding = await preflight(this.config, payload.workspaceId, this.registry)
+        const ws = this.config.workspaces.find(w => w.id === payload.workspaceId)!
+        return { ok: true, binding, checks: ws.harness.verify.commands.map(c => c.id), noChecks: !ws.harness.verify.commands.length }
+      }
+      const res = await flexiblePreflight(this.config, payload.workspaceId, this.registry, {
+        ...(payload.subdir && { subdir: payload.subdir }),
+        ...(payload.autoCommit !== undefined && { autoCommit: payload.autoCommit }),
+        ...(payload.autoPush !== undefined && { autoPush: payload.autoPush }),
+      })
+      return { ok: true, ...res }
+    } catch (error) {
+      return { ok: false, error: (error instanceof Error ? error.message : 'Preflight failed').slice(0, 500) }
+    }
+  }
+  releaseProject({ projectId, workspaceId, root, subdir }: { projectId: string; workspaceId: string; root: string; subdir?: string | undefined }) {
     const workspace = this.config.workspaces.find(w => w.id === workspaceId)
-    if (!workspace || resolveWorkspaceSubdir(workspace.path) !== root) throw new WorkerError('INVALID','PROJECT_BINDING_CHANGED')
-    if (this.active.size || this.cleanupRecordFailed || this.journal.verificationHolds.blocks(workspaceId,root)) throw new WorkerError('WORKSPACE_BUSY','PROJECT_CLEANUP_UNCONFIRMED')
-    this.journal.projectOccupation.release(root,projectId)
+    if (!workspace || resolveWorkspaceSubdir(workspace.path, subdir) !== root) throw new WorkerError('INVALID', 'PROJECT_BINDING_CHANGED')
+    if (this.active.size || this.cleanupRecordFailed || this.journal.verificationHolds.blocks(workspaceId, root)) throw new WorkerError('WORKSPACE_BUSY', 'PROJECT_CLEANUP_UNCONFIRMED')
+    this.journal.projectOccupation.release(root, projectId)
+  }
+  rebaselineProject(payload: ProjectRebaseline): { checksDigest: string; checksDigestVersion: 2 } {
+    const workspace = this.config.workspaces.find(w => w.id === payload.binding.workspaceId)
+    if (!workspace) throw new WorkerError('WORKSPACE_UNKNOWN')
+    try {
+      const expected = payload.binding.mode === 'flexible'
+        ? flexibleBinding(this.config, workspace.id, this.registry, payload.binding)
+        : personalBinding(this.config, workspace.id, this.registry)
+      assertBinding(payload.binding, expected)
+    } catch {
+      throw new WorkerError('INVALID', 'PROJECT_BINDING_CHANGED')
+    }
+    const personalRoot = payload.binding.root
+    const commands = payload.binding.mode === 'flexible' && personalRoot !== workspace.path
+      ? workspace.harness.verify.commands.filter(c => isCommandBoundToProject(workspace.path, personalRoot, c))
+      : workspace.harness.verify.commands
+    if (payload.noChecks && commands.length) {
+      throw new WorkerError('INVALID', 'LEGACY_CHECKS_MISMATCH')
+    }
+    if (computeLegacyChecksDigest(commands) !== payload.legacyChecksDigest) {
+      throw new WorkerError('INVALID', 'LEGACY_CHECKS_MISMATCH')
+    }
+    try {
+      return { checksDigest: computeChecksDigest(workspace.path, commands), checksDigestVersion: 2 }
+    } catch (err) {
+      const code = err instanceof Error && /^[A-Z0-9_]{1,64}$/u.test(err.message) ? err.message : 'COMMAND_FILES_UNBASELINED'
+      throw new WorkerError('INVALID', code)
+    }
   }
   activeIds() { return [...this.active.keys()] }
   awaitRuns() { return Promise.all([...this.active.values()].map(run => run.done)) }

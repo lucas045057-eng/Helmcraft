@@ -2,10 +2,25 @@ import { BoardSnapshot } from '../harness/board.js'
 import { VerifyCommandId } from '../harness/enums.js'
 import { HarnessApplied, PromptDigest, ManifestSummary, ManifestDiffSummary, TamperInfo, VerifyCommandResult, VerificationSummary } from './harness.js'
 import { z } from 'zod'
-import { AdapterId, Profile, RunId, TaskId } from '../common.js'
+import { AdapterId, ArtifactId, Profile, RunId, TaskId } from '../common.js'
 import { AgentEvent } from '../agent-event.js'
 import { TestedCandidate } from './personal-delivery.js'
 const Base = z.strictObject({ seq: z.number().int().positive(), ts: z.number().int() })
+
+export const VisualCheckShot = z.strictObject({
+  routeIndex: z.number().int().min(0).max(5).optional(),
+  route: z.string().min(1).max(256),
+  url: z.string().min(1).max(512),
+  statusCode: z.number().int().nullable(),
+  blankPage: z.boolean(),
+  consoleErrors: z.array(z.string().max(500)).max(20),
+  pageErrors: z.array(z.string().max(500)).max(20),
+  durationMs: z.number().int().nonnegative(),
+  mimeType: z.enum(['image/jpeg', 'image/png']).optional(),
+  imageBase64: z.string().max(560_000).optional(),
+  artifactId: ArtifactId.optional(),
+})
+export type VisualCheckShot = z.infer<typeof VisualCheckShot>
 
 export const LogStream = z.enum(['stdout', 'stderr', 'system'])
 
@@ -46,6 +61,11 @@ export const RunEvent = z.discriminatedUnion('kind', [
     results: z.array(VerifyCommandResult).max(16).optional(),
   }).refine(e => e.phase === 'result' ? e.status !== undefined && e.results !== undefined : e.status === undefined && e.results === undefined,
     { message: 'status/results are present iff phase=result' }),
+  Base.extend({ kind: z.literal('visual'),
+    phase: z.enum(['before', 'after']),
+    status: z.enum(['passed', 'failed', 'skipped']),
+    reason: z.string().max(128).optional(),
+    shots: z.array(VisualCheckShot).max(6) }),
   Base.extend({ kind: z.literal('finished'),
     verification: VerificationSummary.optional(),
     status: z.enum(['succeeded', 'failed', 'timed_out', 'cancelled']),

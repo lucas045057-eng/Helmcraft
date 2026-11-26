@@ -14,6 +14,8 @@ import { LogBuffer } from './logs.js'
 import { useDashboard } from './store.js'
 import { readTaskFields, TaskFields } from './TaskForm.js'
 import { TerminalPane } from './Terminal.js'
+import { VisualCompare } from './VisualCompare.js'
+import { RelayChain } from './RelayChain.js'
 
 const actionNames: Record<TaskAction, string> = { approve: '批准', reject: '驳回', cancel: '取消', retry: '重试',
   input: '补充输入', followup: '继续对话', deliver_result: '审核回传' }
@@ -131,6 +133,8 @@ export function MissionDrawer({ id, workers, connection, close, open }: { id: st
         {task.method && <p className="pill method-used" data-testid="task-method-used">使用方法：{task.method.name} · r{task.method.revision}{task.method.via === 'suggested' ? '（推荐后确认）' : ''}</p>}
         {task.resultSummary ? <section className="drawer-result" data-testid="drawer-result"><h3>结果</h3><pre>{task.resultSummary}</pre></section>
           : summary?.lastProgress || task.lastProgress ? <p className="drawer-progress">当前进展：{summary?.lastProgress ?? task.lastProgress}</p> : null}
+        {runId && <VisualCompare taskId={id} runId={runId} />}
+        <RelayChain task={task} open={open} />
         <Interventions task={task} workers={workers} stale={(summary?.version ?? -1) > task.version} open={open} />
         <details className="prompt"><summary>你的需求 · {task.workspaceId}</summary><pre>{task.prompt}</pre></details>
         <details className="tech-details" data-testid="tech-details" open={tech} onToggle={event => setTech((event.target as HTMLDetailsElement).open)}>

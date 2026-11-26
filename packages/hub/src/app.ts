@@ -47,12 +47,13 @@ export async function createHub(input: HubConfigInput = {}, options: HubOptions 
   const sections = new Map<string, Fiber>()
   const status = { configError: null as string | null, restartRequired: false }
   const statusView = () => ({ ...status })
-  const orchestratorConfig = (value: HubConfig) => ({ ...value.orchestrator, permissions: value.permissions, harness: value.harness, requesterReplyPolicy: value.feishu.requesterReplyPolicy, timezone: config.server.timezone })
+  const orchestratorConfig = (value: HubConfig) => ({ ...value.orchestrator, permissions: value.permissions, harness: value.harness, requesterReplyPolicy: value.feishu.requesterReplyPolicy, timezone: config.server.timezone, steward: value.steward })
   const authConfig = (value: HubConfig) => ({ allowedOrigins: value.dashboard.allowedOrigins, sessionTtlMs: value.dashboard.sessionTtlMs })
   const policyConfig = (value: HubConfig) => ({ autoApproveAll: value.permissions.autoApproveAll, ownerOpenIds: value.feishu.ownerOpenIds, requesterAllowlist: value.feishu.requesterAllowlist,
     requesterPolicy: value.feishu.requesterPolicy, allowedChatIds: value.feishu.allowedChatIds })
   const feishuConfig = (value: HubConfig) => ({ ...value.feishu, permissions: value.permissions, appId: process.env.FEISHU_APP_ID ?? '',
-    appSecret: process.env.FEISHU_APP_SECRET ?? '', maxPromptChars: value.orchestrator.tasks.maxPromptChars, redactionPatterns: value.workers.redactionPatterns })
+    appSecret: process.env.FEISHU_APP_SECRET ?? '', maxPromptChars: value.orchestrator.tasks.maxPromptChars, redactionPatterns: value.workers.redactionPatterns,
+    stewardNotifyChatIds: value.steward.notifyChatIds })
   const feishuPlugin = channelFeishu(config.server.publicUrl, options.feishuTransport, statusView)
   let unsupervise: (() => void) | undefined
   const critical = () => criticalFibers(sections)

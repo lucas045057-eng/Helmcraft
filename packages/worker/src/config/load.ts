@@ -27,7 +27,7 @@ export function loadWorkerReload(path: string, stateDir: string, previous: Worke
   for (const ws of Array.isArray(raw?.workspaces) ? raw.workspaces : []) {
     if (!ws?.harness || typeof ws.harness !== 'object' || Array.isArray(ws.harness)) continue
     requested.set(ws.id, { ...ws.harness })
-    for (const key of ['verify', 'tamper', 'manifest']) delete ws.harness[key]
+    for (const key of ['verify', 'visual', 'tamper', 'manifest']) delete ws.harness[key]
   }
   const next = resolveWorkspaces(WorkerConfigSchema.parse(raw), path, stateDir)
   const freeze = exposureSeen || next.workspaces.some(ws => ws.configExposed)

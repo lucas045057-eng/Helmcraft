@@ -1,8 +1,15 @@
 import type { TaskRow } from './store.js'
-import type { PersonalPlanRequest, ProjectOverview } from '@agent-hub/protocol'
+import type { AutopilotPreflightRequest, AutopilotPreflightResponse, AutopilotStartRequest, PersonalPlanRequest, ProjectBriefingView, ProjectOverview, RunArtifactView, RunBriefingRequest } from '@agent-hub/protocol'
 import type { AcceptRunRequest, HandoffPreview, HandoffPreviewQuery, HandoffTaskRequest, RunHarnessView, WorkspacePointerView, Actor, ApprovalOverrides, CreateTaskRequest, OverviewView, TaskDetailView, TaskOrigin, TaskView, TaskListQuery, TaskListResponse, LogsQuery, LogsResponse, DeliverResultRequest } from '@agent-hub/protocol'
 export type CreateTaskInput = Pick<CreateTaskRequest, 'prompt' | 'workspaceId'> & Partial<CreateTaskRequest> & { origin?: TaskOrigin }
-export interface CreateOptions { idempotencyKey?: string | undefined; personalPlan?: PersonalPlanRequest; implementProject?: string; gateProject?: string; methodVia?: 'named' | 'suggested' }
+export interface InitialArtifact {
+  kind: 'inbound_image' | 'inbound_audio' | 'inbound_file'
+  label: string
+  mimeType: string
+  data: Buffer
+  meta?: unknown
+}
+export interface CreateOptions { idempotencyKey?: string | undefined; personalPlan?: PersonalPlanRequest; implementProject?: string; gateProject?: string; methodVia?: 'named' | 'suggested'; initialArtifacts?: InitialArtifact[] }
 export interface VersionOptions { expectedVersion?: number | undefined }
 export interface ApprovalOptions extends VersionOptions { overrides?: ApprovalOverrides | undefined; force?: boolean | undefined }
 export interface ReasonOptions extends VersionOptions { reason?: string | undefined }
@@ -32,4 +39,10 @@ export interface Orchestrator {
   setWorkerDrain(workerId: string, drain: boolean, actor: Actor): Promise<void>
   overview(): OverviewView
   pauseScheduling(): void
+  preflightProject(input: AutopilotPreflightRequest): Promise<AutopilotPreflightResponse>
+  startAutopilot(input: AutopilotStartRequest, actor: Actor, origin?: TaskOrigin): Promise<{ projectId: string; task: TaskDetailView }>
+  runBriefing(kind: 'morning' | 'manual' | 'patrol', filter?: RunBriefingRequest): ProjectBriefingView[]
+  listBriefings(query?: { workerId?: string; workspaceId?: string; subdir?: string; limit?: number }): ProjectBriefingView[]
+  dispatchBriefingAction(briefingId: string, index: number, actor: Actor, opts?: { origin?: TaskOrigin; idempotencyKey?: string }): Promise<TaskDetailView>
+  listRunArtifacts(taskRef: string, runId: string): RunArtifactView[]
 }
