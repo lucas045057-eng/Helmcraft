@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { powershell, psArgs, psLiteral } from './windows-powershell.js'
+import { powershell, psArgs, psEnv, psLiteral } from './windows-powershell.js'
 
 const entry = fileURLToPath(new URL('../bin/agent-worker.mjs', import.meta.url))
 
@@ -12,7 +12,7 @@ function taskRunner(taskName: string, script: string) {
   }
   return new Promise<void>((resolve, reject) => {
     execFile(powershell, psArgs('$name = ' + psLiteral(taskName) + '\n' + script),
-      { windowsHide: true, shell: false, timeout: 20_000 }, (error, _stdout, stderr) => {
+      { windowsHide: true, shell: false, timeout: 20_000, env: psEnv() }, (error, _stdout, stderr) => {
         if (error) reject(new Error('Windows Task Scheduler failed', { cause: stderr.trim() || error }))
         else resolve()
       })

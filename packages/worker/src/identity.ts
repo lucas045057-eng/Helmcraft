@@ -3,10 +3,10 @@ import { execFileSync } from 'node:child_process'
 import type { ExecFileSyncOptionsWithStringEncoding } from 'node:child_process'
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { powershell, psArgs, psLiteral, windowsSystemDir } from './windows-powershell.js'
+import { powershell, psArgs, psEnv, psLiteral, windowsSystemDir } from './windows-powershell.js'
 
-const windowsOptions: ExecFileSyncOptionsWithStringEncoding = { encoding: 'utf8', windowsHide: true, shell: false,
-  timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] }
+const windowsOptions = (): ExecFileSyncOptionsWithStringEncoding => ({ encoding: 'utf8', windowsHide: true, shell: false,
+  timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'], env: psEnv() })
 const aclContext = (path: string) => `
 $path = ${psLiteral(path)}
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -19,7 +19,7 @@ function restrictWindowsIdentity(path: string, writable = false) {
 $acl.SetSecurityDescriptorSddlForm(('D:P(A;;${writable ? 'FRFW' : 'FR'};;;' + $sid.Value + ')'), 'Access')
 [System.IO.File]::SetAccessControl($path, $acl)
 $sid.Value
-`), windowsOptions).trim()
+`), windowsOptions()).trim()
 }
 
 export function identityPermissionsArePrivate(path: string) {
@@ -32,7 +32,7 @@ $read = [System.Security.AccessControl.FileSystemRights]::Read
 if ($acl.AreAccessRulesProtected -and $rules.Count -eq 1 -and
     $rules[0].IdentityReference -eq $sid -and $rules[0].AccessControlType -eq 'Allow' -and
     ($rules[0].FileSystemRights -band $read) -eq $read) { 'private' }
-`), windowsOptions)
+`), windowsOptions())
   return result.trim() === 'private'
 }
 
@@ -46,7 +46,7 @@ export function loadIdentity(path: string, create = false) {
       const sid = process.platform === 'win32' ? restrictWindowsIdentity(path, true) : undefined
       writeFileSync(path, privateKey.export({ type: 'pkcs8', format: 'pem' }))
       if (sid) execFileSync(join(windowsSystemDir, 'icacls.exe'),
-        [path, '/grant:r', '*' + sid + ':(R)'], windowsOptions)
+        [path, '/grant:r', '*' + sid + ':(R)'], windowsOptions())
     } catch (error) {
       try { unlinkSync(path) } catch { /* Preserve the original failure. */ }
       throw error

@@ -2,14 +2,18 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+// Kept dependency-free: kill-tree.ts and test fixtures load this file as raw TypeScript.
+// Mirrors psEnv() in ../windows-powershell.ts (drop an inherited PowerShell 7 PSModulePath).
+const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+const psEnv = () => Object.fromEntries(Object.entries(process.env).filter(([key]) => key.toUpperCase() !== 'PSMODULEPATH'))
+
 export function processStartTime(pid: number): string | undefined {
   if (!Number.isSafeInteger(pid) || pid <= 0) return
   try {
     if (process.platform === 'win32') {
-      const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
       const out = execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
         "(Get-CimInstance Win32_Process -Filter 'ProcessId=" + pid + "').CreationDate.ToUniversalTime().Ticks"],
-      { encoding: 'utf8', timeout: 3000, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+      { encoding: 'utf8', timeout: 3000, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'ignore'], env: psEnv() }).trim()
       return /^\d+$/.test(out) ? out : undefined
     }
     if (process.platform === 'linux') {
@@ -34,10 +38,9 @@ export function windowsProcessTree(root: number, start: string): ReadonlyMap<num
   const found = new Map<number, string>()
   if (process.platform !== 'win32' || !processAlive(root)) return found
   try {
-    const powershell = join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
     const out = execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
       "Get-CimInstance Win32_Process | ForEach-Object { '{0},{1},{2}' -f $_.ProcessId,$_.ParentProcessId,$_.CreationDate.ToUniversalTime().Ticks }"],
-    { encoding: 'utf8', timeout: 3000, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'ignore'] })
+    { encoding: 'utf8', timeout: 3000, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'ignore'], env: psEnv() })
     const processes = out.trim().split(/\r?\n/).flatMap(line => {
       const match = /^(\d+),(\d+),(\d+)$/.exec(line)
       return match ? [{ pid: Number(match[1]), parent: Number(match[2]), start: match[3]! }] : []
