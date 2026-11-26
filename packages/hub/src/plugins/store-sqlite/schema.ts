@@ -53,6 +53,7 @@ export const tasks = sqliteTable('tasks', {
   rejectReason: text('reject_reason'),
   // —— 结果 ——
   resultSummary: text('result_summary'),
+  feishuResultVersion: integer('feishu_result_version'), // hybrid delivery: null for legacy, 0 until first complete delivery
   resultDeliveryStatus: text('result_delivery_status', { enum: ['not_required', 'pending_review', 'delivered', 'suppressed'] }).notNull().default('not_required'),
   resultDeliveredAt: ts('result_delivered_at'),
   cliSessionId: text('cli_session_id'),                         // 最近一次成功 Run 的会话
@@ -200,12 +201,13 @@ export const feishuMessages = sqliteTable('feishu_messages', {
   chatType: text('chat_type', { enum: ['p2p', 'group'] }).notNull(),
   audience: text('audience', { enum: ['owner', 'requester'] }),
   senderOpenId: text('sender_open_id'),                         // role=request 时为用户
+  resultKey: text('result_key'), // deterministic send UUID for a terminal result part
   cardHash: text('card_hash'),                                  // 最近一次成功推送的渲染哈希
   cardTaskVersion: integer('card_task_version'),
   dead: bool('dead').notNull().default(false),                  // 不可再 patch
   createdAt: ts('created_at').notNull(),
   lastPatchedAt: ts('last_patched_at'),
-}, (t) => [index('ix_fsmsg_task').on(t.taskId, t.role)])
+}, (t) => [index('ix_fsmsg_task').on(t.taskId, t.role), uniqueIndex('ux_fsmsg_result_key').on(t.resultKey).where(isNotNull(t.resultKey))])
 
 export const feishuEventDedupe = sqliteTable('feishu_event_dedupe', {
   key: text('key').primaryKey(),                                // 'evt:<event_id>' | 'msg:<message_id>' | 'act:<event_id>'

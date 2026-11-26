@@ -1,6 +1,6 @@
 import type { Context } from 'cordis'
 import { createRedactor } from '@agent-hub/common'
-import { and, eq, or, gte, isNull, sql } from 'drizzle-orm'
+import { and, eq, or, gte, isNull, lt, inArray, sql } from 'drizzle-orm'
 import type { HubConfig } from '../../config/schema.js'
 import { guardAsync, safeOn } from '../../kernel/safe.js'
 import { onHotUpdate } from '../../kernel/hot-update.js'
@@ -10,7 +10,7 @@ import { CardDelivery } from './delivery.js'
 import { ActionHandler } from './action-handler.js'
 import { MessageRouter } from './router.js'
 
-export type ChannelConfig = HubConfig['feishu'] & { appId: string; appSecret: string; maxPromptChars: number; redactionPatterns: string[] }
+export type ChannelConfig = HubConfig['feishu'] & { permissions: HubConfig['permissions']; appId: string; appSecret: string; maxPromptChars: number; redactionPatterns: string[] }
 export function channelFeishu(publicUrl: string, injected?: FeishuTransport, hubStatus?: () => { configError: string | null; restartRequired: boolean }) {
   let failed = false
   return { name: 'channel-feishu', inject: ['orchestrator', 'store', 'clock'],
@@ -53,7 +53,7 @@ export function channelFeishu(publicUrl: string, injected?: FeishuTransport, hub
         router.draining = draining
         drain = async () => { router.draining = true; await delivery.updater.flush() }
         onHotUpdate<ChannelConfig>(ctx, ['card', 'ownerOpenIds', 'requesterAllowlist', 'allowedChatIds', 'requesterPolicy',
-          'requesterReplyPolicy', 'defaultWorkspaceId', 'chatDefaults', 'maxPromptChars', 'staleMessageMs', 'redactionPatterns'], next => {
+          'permissions', 'deliveryMode', 'groupAudience', 'allowGroupCommands', 'defaultProfile', 'requesterReplyPolicy', 'defaultWorkspaceId', 'chatDefaults', 'maxPromptChars', 'staleMessageMs', 'redactionPatterns'], next => {
           current = next
           delivery.config = next
           router.maxChars = next.maxPromptChars
@@ -64,10 +64,12 @@ export function channelFeishu(publicUrl: string, injected?: FeishuTransport, hub
           const staleBinding = sql`exists (select 1 from ${feishuMessages} where ${feishuMessages.taskId} = ${tasks.id}
             and ${feishuMessages.dead} = 0 and ${feishuMessages.role} in ('progress_card', 'approval_card', 'review_card')
             and coalesce(${feishuMessages.cardTaskVersion}, -1) < ${tasks.version})`
+          const missingResult = current.deliveryMode === 'hybrid' ? and(lt(tasks.feishuResultVersion, tasks.version),
+            inArray(tasks.resultDeliveryStatus, ['not_required', 'delivered'])) : undefined
           const pending = ctx.store.repos.select({ id: tasks.id }).from(tasks).where(and(eq(tasks.source, 'feishu'),
-            or(isNull(tasks.finishedAt), gte(tasks.finishedAt, ctx.clock.now() - 600000), staleBinding,
+            or(isNull(tasks.finishedAt), gte(tasks.finishedAt, ctx.clock.now() - 600000), staleBinding, missingResult,
               eq(tasks.resultDeliveryStatus, 'pending_review')))).all()
-          for (const task of pending) void guardAsync(ctx, delivery.ensure(task.id), 'recover Feishu card')
+          for (const task of pending) void guardAsync(ctx, sync(task.id), 'recover Feishu card')
         }
         const onStatus = (next: ConnectionState) => {
           if (closed) return

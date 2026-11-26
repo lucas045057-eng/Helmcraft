@@ -9,6 +9,7 @@ import { preparePlan } from '../src/personal/plan.js'
 import { checkedCandidate } from '../src/personal/review-input.js'
 import { bindRepository } from '../src/personal/roles.js'
 
+// Each scenario runs real Git processes, including hooks and transport, against two local repositories.
 it.each(['normal','late-file','commit-hook','reject-push','core-drift'])('checks Git delivery and retains the scene for %s', async mode=>{
   const dir=mkdtempSync(join(tmpdir(),'delivery-')), root=join(dir,'project'), remote=join(dir,'remote.git')
   const git=(...args:string[])=>execFileSync('git',args,{cwd:dir,encoding:'utf8',stdio:'pipe'}).trimEnd()
@@ -58,4 +59,4 @@ it.each(['normal','late-file','commit-hook','reject-push','core-drift'])('checks
     else expect(await execute('verify_final',commit)).toMatchObject({remoteSha:commit})
     expect(core).toHaveBeenCalledOnce()
   } finally {rmSync(dir,{recursive:true,force:true})}
-})
+}, 30_000)

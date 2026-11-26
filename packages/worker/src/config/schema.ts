@@ -7,7 +7,7 @@ const positive = z.number().int().positive()
 export const AdapterConfig = z.strictObject({
   enabled: z.boolean().default(false), command: z.string().optional(),
   passEnv: z.array(z.string()).optional(), env: z.record(z.string(), z.string()).default({}),
-  allowedExtraArgs: z.array(z.string().min(1)).default([]),
+  allowedExtraArgs: z.array(z.string().min(1).regex(/^\P{Cc}+$/u)).default([]),
   argsOverride: z.partialRecord(Profile, z.array(z.string())).default({}),
   stderrEncoding: z.enum(['utf8', 'gbk']).default('utf8'),
 })

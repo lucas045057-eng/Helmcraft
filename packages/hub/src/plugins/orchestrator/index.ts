@@ -34,6 +34,7 @@ import { blockUnconfirmedDelivery, closeProject } from './personal-controls.js'
 
 type Effect = TaskEffect | { type: 'pointer.changed'; workerId: string; workspaceId: string } | { type: 'harness.updated' } | { type: 'verification.outcome'; status: 'passed' | 'failed' | 'unverified' | 'skipped' }
 export interface OrchestratorConfig {
+  permissions: HubConfig['permissions']
   harness: HubConfig['harness']
   scheduler: { tickMs: number; scanLimit: number; defaultAdapterOrder: AdapterId[]; refuseBackoffMs: number; unschedulableWarnMs: number }
   tasks: { defaultTimeoutMs: number; idleTimeoutMs: number; approvalTimeoutMs: number; inputTimeoutMs: number;
@@ -51,7 +52,7 @@ const version = (opts: VersionOptions) => opts.expectedVersion === undefined ? {
 export class OrchestratorService extends Service implements Orchestrator, WorkerInboundHandler {
   static inject = ['store', 'policy', 'workers', 'clock']
   static Config = HubConfigSchema.shape.orchestrator.unwrap().extend({
-    harness: HubConfigSchema.shape.harness,
+    harness: HubConfigSchema.shape.harness, permissions: HubConfigSchema.shape.permissions,
     requesterReplyPolicy: z.enum(['auto', 'owner_review']).default('auto'),
     timezone: HubConfigSchema.shape.server.unwrap().shape.timezone,
   })
@@ -97,7 +98,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       if (worker.connection === 'online' && (previous?.connection !== 'online' || worker.drain !== previous.drain ||
         JSON.stringify(worker.adapters) !== JSON.stringify(previous.adapters))) this.schedule()
     })
-    onHotUpdate<OrchestratorConfig>(ctx, ['scheduler', 'tasks', 'limits', 'requesterReplyPolicy', 'harness'], next => { this.config = next; this.schedule() })
+    onHotUpdate<OrchestratorConfig>(ctx, ['scheduler', 'tasks', 'limits', 'requesterReplyPolicy', 'harness', 'permissions'], next => { this.config = next; this.schedule() })
     this.schedule()
     ctx.effect(() => async () => { this.pauseScheduling(); await this.pendingScheduling }, 'orchestrator:stop')
   }
@@ -110,11 +111,11 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   }
   private view(task: TaskRow, actor: Actor = owner) {
     const run = taskRunsFor(this.db, task.id)[0]
-    return taskView(this.db, task, run && this.ctx.workers.get(run.workerId), actor, run)
+    return taskView(this.db, task, run && this.ctx.workers.get(run.workerId), actor, run, this.config.permissions.allowRequesterCommands)
   }
   getTask(ref: string, actor: Actor = owner) {
     const task = findTask(this.db, ref)
-    return task && taskDetail(this.db, task, id => this.ctx.workers.get(id), actor)
+    return task && taskDetail(this.db, task, id => this.ctx.workers.get(id), actor, this.config.permissions.allowRequesterCommands)
   }
   private checkHandoffBinding(task: TaskRow, workspaceId: string, workerId: string | null) {
     if (!task.handoffFromRunId) return
@@ -179,7 +180,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         }
         if (!allowedActions(taskState(db, parent), actor).includes('followup')) throw new HubError('FORBIDDEN', 403)
       }
-      if (actor.type === 'requester') {
+      if (actor.type === 'requester' && !this.config.permissions.disableRequesterLimits) {
         const count = db.select({ count: sql<number>`count(*)` }).from(tasks)
           .where(and(eq(tasks.requesterId, actor.id), gte(tasks.createdAt, now - 3_600_000))).get()!.count
         if (count >= this.config.limits.requesterTasksPerHour) throw new HubError('RATE_LIMITED', 429, undefined, 3600)
@@ -229,7 +230,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   }
   async handoff(ref: string, actor: Actor, input: HandoffInput, opts: CreateOptions = {}) {
     const task = this.requireTask(ref)
-    const { from, adapter, resume, intent } = handoffSource(this.db, task, actor, input, id => this.ctx.workers.get(id))
+    const { from, adapter, resume, intent } = handoffSource(this.db, task, actor, input, id => this.ctx.workers.get(id), this.config.permissions.allowRequesterHandoff)
     if (input.requiredWorkerId && input.requiredWorkerId !== from.workerId) throw new HubError('VALIDATION_FAILED', 400, { reason: 'HANDOFF_WORKER_MISMATCH' })
     const model = input.model ?? (adapter === from.adapter ? task.model : null)
     return this.submit({ ...(input.priority !== undefined && { priority: input.priority }), prompt: input.prompt ?? HANDOFF_DEFAULT_PROMPTS[intent], workspaceId: from.workspaceId,
@@ -240,9 +241,10 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   }
   handoffPreview(ref: string, actor: Actor, query: HandoffPreviewQuery) {
     const task = this.requireTask(ref)
-    const source = handoffSource(this.db, task, actor, query, id => this.ctx.workers.get(id))
+    const source = handoffSource(this.db, task, actor, query, id => this.ctx.workers.get(id), this.config.permissions.allowRequesterHandoff)
     const policy = policyFor(this.config.harness, source.from.workspaceId)
-    return preview(this.db, task, source, this.now(), this.config.scheduler.defaultAdapterOrder, policy.enabled && policy.blackboard)
+    const boardEnabled = policy.enabled && policy.blackboard && (actor.type === 'owner' || policy.allowRequesterBlackboard)
+    return preview(this.db, task, source, this.now(), this.config.scheduler.defaultAdapterOrder, boardEnabled)
   }
   runHarness(ref: string, runId: string) {
     const task = this.requireTask(ref)
@@ -254,7 +256,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
   async acceptRun(worker: string, workspace: string, actor: Actor, input: AcceptRunRequest) {
     try {
       const view = this.ctx.store.tx(db => {
-        const run = acceptRun(db, worker, workspace, actor, input, this.now())
+        const run = acceptRun(db, worker, workspace, actor, input, this.now(), this.config.permissions.allowRequesterHandoff)
         this.audit(db, run.taskId, actor, 'task.workspace.accepted', null, null, { runId: run.id, by: actor.id, seq: run.workspaceSeq })
         return pointerView(db, db.pointers.get(worker, workspace)!)
       })
@@ -351,7 +353,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
       throw new HubError('INVALID_TRANSITION', 409, { reason: 'PROJECT_OCCUPIED' })
     }
     if ('runId' in event && event.runId !== task.currentRunId) return [{ type: 'metric.stale_run_event', runId: event.runId }]
-    const result = reduce(taskState(db, task), event, { now,
+    const result = reduce(taskState(db, task), event, { now, allowRequesterCommands: this.config.permissions.allowRequesterCommands,
       ...(event.type === 'DISPATCH' && { newRunId: runId(now) }),
       validateOverrides: overrides => this.validateOverrides(overrides, task),
     })
@@ -646,7 +648,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         this.audit(db, task.id, actor, 'task.harness.verification', null, null, { runId: run.id, ...outcome })
       }
       const boardDeleted = record?.boardDiff?.some(f => f.change === 'deleted') || (record?.pre?.board?.dir === 'present' && record.post?.board?.dir === 'unsafe')
-      const gate = task.requesterType === 'requester' && event.status === 'succeeded' && record &&
+      const gate = !this.config.permissions.disableResultGating && task.requesterType === 'requester' && event.status === 'succeeded' && record &&
         (boardDeleted ? 'BOARD_DELETED' : outcome?.status === 'unverified' || outcome?.status === 'failed' ? 'VERIFICATION'
           : outcome?.reason === 'TAMPER_RISK' || outcome?.reason === 'CONFIG_EXPOSED' ? 'TAMPER_RISK' : undefined)
       if (gate) {
@@ -654,7 +656,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         this.audit(db, task.id, actor, 'task.harness.result_gated', null, null, { runId: run.id, reason: gate })
       }
       const acceptance = autoAccept(db, fresh, task.requesterType, this.now(), !!record?.directive?.verify || !!outcome, outcome,
-        verificationRecord(fresh).attempts.some(attempt => attempt.status === 'failed'))
+        verificationRecord(fresh).attempts.some(attempt => attempt.status === 'failed'), this.config.permissions.allowRequesterAutoAccept)
       if (acceptance === 'accepted') {
         this.audit(db, task.id, system, 'task.workspace.accepted', null, null, { runId: run.id, seq: fresh.workspaceSeq, by: 'auto' })
         effects.push({ type: 'pointer.changed', workerId: run.workerId, workspaceId: run.workspaceId })
@@ -796,7 +798,7 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
         if (!project && !step && task.profile !== 'readonly' && occupied(this.db, task.workspaceId, task.requiredWorkerId)) return
         const active = this.activeRuns()
         const now = this.now()
-        const concurrent = task.requesterType === 'requester' && this.db.select({ count: sql<number>`count(*)` }).from(tasks)
+        const concurrent = !this.config.permissions.disableRequesterLimits && task.requesterType === 'requester' && this.db.select({ count: sql<number>`count(*)` }).from(tasks)
           .where(and(eq(tasks.requesterType, 'requester'), eq(tasks.requesterId, task.requesterId), inArray(tasks.status, activeRunStatuses))).get()!.count
         const prior = taskRunsFor(this.db, task.id)
         const refused = new Set(prior.filter(run => run.status === 'refused' &&

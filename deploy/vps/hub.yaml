@@ -17,6 +17,8 @@ dashboard:
   allowedOrigins: [https://helm.sorengao.fun]
   sessionTtlMs: 43200000
 feishu:
+  deliveryMode: hybrid
+  card: { minPatchIntervalMs: 1500 }
   enabled: true
   domain: feishu
   ownerOpenIds: [] # 私聊机器人 /whoami 后填入 ou_...

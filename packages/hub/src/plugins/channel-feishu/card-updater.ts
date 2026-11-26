@@ -154,10 +154,11 @@ export class MessageSender {
   private readonly global = new TokenBucket(5, 5, { monotonic: Date.now })
   private readonly chats = new Map<string, number>()
   private readonly stop = new AbortController()
-  async send<T>(chat: string, fn: () => Promise<T>, idempotent = false): Promise<T> {
+  async send<T>(chat: string, fn: () => Promise<T>, idempotent = false, stillWanted?: () => boolean): Promise<T> {
     let retries = 0
     const { signal } = this.stop
     while (!signal.aborted) {
+      if (stillWanted && !stillWanted()) throw new Error('Feishu message superseded')
       const now = Date.now()
       const wait = (this.chats.get(chat) ?? 0) - now
       if (wait <= 0 && this.global.take()) {

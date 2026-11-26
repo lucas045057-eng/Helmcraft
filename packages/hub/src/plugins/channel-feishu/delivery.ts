@@ -2,15 +2,16 @@ import type { Context } from 'cordis'
 import { eq } from 'drizzle-orm'
 import { KeyedMutex, Lru, stableHash } from '@agent-hub/common'
 import type { Actor, TaskDetailView } from '@agent-hub/protocol'
-import type { HubConfig } from '../../config/schema.js'
+import type { ChannelConfig } from './index.js'
 import type { StoredEvent } from '../../services/store.js'
-import { feishuMessages } from '../store-sqlite/schema.js'
+import { feishuMessages, tasks } from '../store-sqlite/schema.js'
 import type { HarnessRecord } from '../orchestrator/harness.js'
 import { guardAsync } from '../../kernel/safe.js'
 import { CardUpdater, MessageSender, errorKind } from './card-updater.js'
 import { displayText, extractProgress } from './cards/progress.js'
 import type { Audience } from './cards/progress.js'
-import { renderApprovalCard, renderOwnerReviewCard, renderProgressCard, terminal } from './cards/index.js'
+import { renderApprovalCard, renderOwnerReviewCard, renderProgressCard, renderStreamingCard, terminal } from './cards/index.js'
+import { resultMessages } from './result-text.js'
 import type { FeishuTransport, OutboundMessage } from './transport.js'
 
 export type Binding = typeof feishuMessages.$inferSelect
@@ -23,7 +24,7 @@ export class CardDelivery {
   private readonly progress = new Map<string, { runId: string; at: number; owner: string[]; requester: string[] }>()
   private closed = false
   scrub: (value: string) => string = value => value
-  constructor(readonly ctx: Context, readonly transport: FeishuTransport, public config: HubConfig['feishu'], readonly publicUrl: string) {
+  constructor(readonly ctx: Context, readonly transport: FeishuTransport, public config: ChannelConfig, readonly publicUrl: string) {
     this.updater = new CardUpdater(transport, config.card, {
       sent: (id, hash, version) => {
         this.update(id, { cardHash: hash, cardTaskVersion: version, lastPatchedAt: this.ctx.clock.now() })
@@ -47,6 +48,9 @@ export class CardDelivery {
       warn: () => ctx.logger.warn('飞书卡片更新失败'),
     })
   }
+  groupAudience(chatId: string): Audience {
+    return this.config.allowedChatIds.includes(chatId) ? this.config.groupAudience : 'requester'
+  }
   binding(id: string) { return this.ctx.store.repos.select().from(feishuMessages).where(eq(feishuMessages.messageId, id)).get() }
   bind(row: typeof feishuMessages.$inferInsert) {
     this.ctx.store.repos.insert(feishuMessages).values(row).onConflictDoNothing().run()
@@ -54,19 +58,19 @@ export class CardDelivery {
   private update(id: string, values: Partial<Binding>) {
     this.ctx.store.repos.update(feishuMessages).set(values).where(eq(feishuMessages.messageId, id)).run()
   }
-  async reply(chat: string, message: string, body: OutboundMessage, uuid?: string) {
+  async reply(chat: string, message: string, body: OutboundMessage, uuid?: string, stillWanted?: () => boolean) {
     const key = this.privateChats.get(chat) ?? chat
     try {
-      return await this.sender.send(key, () => this.transport.replyMessage(message, body, uuid ? { uuid } : {}), Boolean(uuid))
+      return await this.sender.send(key, () => this.transport.replyMessage(message, body, uuid ? { uuid } : {}), Boolean(uuid), stillWanted)
     } catch (error) {
       if (!uuid || errorKind(error) !== 'dead') throw error
-      return this.sender.send(key, () => this.transport.sendMessage({ idType: 'chat_id', id: chat }, body, { uuid }), true)
+      return this.sender.send(key, () => this.transport.sendMessage({ idType: 'chat_id', id: chat }, body, { uuid }), true, stillWanted)
     }
   }
   dm(id: string, body: OutboundMessage, uuid?: string) {
     return this.sender.send(id, () => this.transport.sendMessage({ idType: 'open_id', id }, body, uuid ? { uuid } : {}), Boolean(uuid))
   }
-  render(task: TaskDetailView, role: Binding['role'], audience: Audience) {
+  render(task: TaskDetailView, role: Binding['role'], audience: Audience, chatType = task.origin.feishu?.chatType) {
     const row = this.ctx.store.repos.tasks.get(task.id)
     const { id, taskNo, status, version, allowedActions, resultDeliveryStatus, attempt, profile, workspaceId, adapter,
       scheduleHint, errorCode, startedAt, finishedAt, updatedAt, inputRequest } = task
@@ -101,13 +105,19 @@ export class CardDelivery {
         workspaces: workers.flatMap(w => w.workspaces.map(v => v.id)),
         adapters: workers.flatMap(w => w.adapters.map(v => v.id)), profiles: task.requester.type === 'owner' ? ['readonly', 'edit', 'full'] : ['readonly', 'edit'] })
     }
-    return renderProgressCard({ ...model, ...(harness && { harness }), ...(Array.isArray(files) && { filesChanged: files.length }) }, audience)
+    const render = this.config.deliveryMode === 'hybrid' ? renderStreamingCard : renderProgressCard
+    const group = chatType === 'group'
+    const handoffAllowed = (!group || this.config.allowGroupCommands) && (audience === 'owner' || this.config.permissions.allowRequesterHandoff)
+    const resultVisible = (!group && audience === 'owner') || ['not_required', 'delivered'].includes(resultDeliveryStatus)
+    return render({ ...model, resultVisible, handoffAllowed, verificationState: run?.harness?.verification?.state,
+      ...(handoffAllowed && run?.harness?.verification?.state === 'failed' && { fixRunId: run.id }), ...(harness && { harness }), ...(Array.isArray(files) && { filesChanged: files.length }) }, audience)
   }
-  desired(id: string, role: Binding['role'], audience: Audience) {
+  desired(id: string, role: Binding['role'], audience: Audience, chatType?: Binding['chatType']) {
     const row = this.ctx.store.repos.tasks.get(id)!
-    const actor: Actor = { type: audience, channel: 'feishu', id: row.requesterId }
+    const type = role === 'progress_card' && (this.config.deliveryMode === 'hybrid' || audience === 'owner') ? row.requesterType : audience
+    const actor: Actor = { type, channel: 'feishu', id: row.requesterId }
     const task = this.ctx.orchestrator.getTask(id, actor)!
-    return { card: this.render(task, role, audience), version: task.version, terminal: terminal(task.status) }
+    return { card: this.render(task, role, audience, chatType), version: task.version, terminal: terminal(task.status) }
   }
   onProgress(id: string, runId: string, events: StoredEvent[]) {
     if (this.ctx.store.repos.tasks.get(id)?.source !== 'feishu') return
@@ -115,8 +125,9 @@ export class CardDelivery {
     const state = recent?.runId === runId ? recent : { runId, at: 0, owner: [], requester: [] }
     let changed = false
     for (const audience of ['owner', 'requester'] as const) {
-      const lines = extractProgress(events, audience)
-      if (lines.length) { state[audience] = [...state[audience], ...lines].slice(-5); changed = true }
+      const limit = this.config.deliveryMode === 'hybrid' ? 8 : 5
+      const lines = extractProgress(events, audience, limit, this.scrub)
+      if (lines.length) { state[audience] = [...state[audience], ...lines].slice(-limit); changed = true }
     }
     if (!changed) return
     state.at = this.ctx.clock.now()
@@ -132,7 +143,9 @@ export class CardDelivery {
         this.updater.forget(row.messageId)
         continue
       }
-      const desired = this.desired(id, row.role, row.audience)
+      const audience = row.chatType === 'group' ? this.groupAudience(row.chatId) : row.audience
+      if (row.audience !== audience) this.update(row.messageId, { audience })
+      const desired = this.desired(id, row.role, audience, row.chatType)
       if (row.cardTaskVersion !== desired.version && row.cardHash === stableHash(desired.card)) {
         this.update(row.messageId, { cardTaskVersion: desired.version })
       }
@@ -146,8 +159,11 @@ export class CardDelivery {
       const task = this.ctx.orchestrator.getTask(id)
       const source = task?.origin.feishu
       if (!task || !source) return
+      if (this.config.deliveryMode === 'hybrid' && this.ctx.store.repos.tasks.get(id)?.feishuResultVersion === null) {
+        this.ctx.store.repos.update(tasks).set({ feishuResultVersion: 0 }).where(eq(tasks.id, id)).run()
+      }
       if (source.chatType === 'p2p') this.privateChats.set(source.chatId, task.requester.id)
-      const audience = task.requester.type === 'owner' && source.chatType === 'p2p' ? 'owner' : 'requester'
+      const audience = source.chatType === 'group' ? this.groupAudience(source.chatId) : task.requester.type === 'owner' ? 'owner' : 'requester'
       this.bind({ ...source, taskId: id, role: 'request', senderOpenId: task.requester.id, audience, createdAt: task.createdAt })
       const messages = this.ctx.store.repos.feishu.messages(id)
       const sendCard = async (role: CardRole, to?: string) => {
@@ -163,7 +179,10 @@ export class CardDelivery {
         this.bind({ messageId: sent.messageId, taskId: id, role, chatId, chatType: to ? 'p2p' : source.chatType,
           audience: target, cardHash: stableHash(desired.card), cardTaskVersion: desired.version, createdAt: this.ctx.clock.now() })
       }
-      await sendCard('progress_card')
+      try { await sendCard('progress_card') } catch (error) {
+        if (this.config.deliveryMode !== 'hybrid' || !terminal(this.ctx.orchestrator.getTask(id)!.status)) throw error
+        this.ctx.logger.warn('飞书终态卡片发送失败')
+      }
       if (this.closed) return
       const latest = this.ctx.orchestrator.getTask(id)!
       const role = latest.status === 'awaiting_approval' ? 'approval_card' :
@@ -171,7 +190,22 @@ export class CardDelivery {
       if (role) for (const to of new Set(this.config.ownerOpenIds)) await sendCard(role, to)
       const bindings = this.ctx.store.repos.feishu.messages(id)
       const progress = bindings.find(m => m.role === 'progress_card' && !m.dead)
-      if (latest.status === 'succeeded' && ['not_required', 'delivered'].includes(latest.resultDeliveryStatus) &&
+      if (this.config.deliveryMode === 'hybrid' && terminal(latest.status) && this.ctx.store.repos.tasks.get(id)?.feishuResultVersion !== latest.version &&
+        (latest.requester.type === 'owner' || ['not_required', 'delivered'].includes(latest.resultDeliveryStatus))) {
+        const texts = resultMessages(latest, value => displayText(this.scrub(value), audience))
+        const stillWanted = () => !this.closed && this.config.deliveryMode === 'hybrid' &&
+          this.ctx.store.repos.tasks.get(id)?.version === latest.version &&
+          (source.chatType !== 'group' || this.groupAudience(source.chatId) === audience)
+        for (const [index, text] of texts.entries()) {
+          const uuid = stableHash(['result_text', id, latest.version, index]).slice(0, 48)
+          if (bindings.some(row => row.role === 'result_text' && row.resultKey === uuid)) continue
+          if (!stillWanted()) return
+          const sent = await this.reply(source.chatId, source.messageId, { type: 'text', text }, uuid, stillWanted)
+          this.bind({ messageId: sent.messageId, taskId: id, role: 'result_text', chatId: source.chatId, chatType: source.chatType,
+            resultKey: uuid, audience, createdAt: this.ctx.clock.now() })
+        }
+        this.ctx.store.repos.update(tasks).set({ feishuResultVersion: latest.version }).where(eq(tasks.id, id)).run()
+      } else if (this.config.deliveryMode === 'card' && latest.status === 'succeeded' && ['not_required', 'delivered'].includes(latest.resultDeliveryStatus) &&
         (!progress || progress.cardTaskVersion === latest.version) && !bindings.some(row => row.role === 'result_text')) {
         const result = displayText(this.scrub(latest.resultSummary ?? ''), audience)
         if (!progress || result.length > this.config.card.cardResultMaxChars) {
@@ -187,7 +221,12 @@ export class CardDelivery {
   }
   async deliver(id: string) {
     await this.ensure(id)
-    // The orchestrator persists deliveredAt only after the target card was actually updated.
+    if (this.config.deliveryMode === 'hybrid') {
+      const task = this.ctx.store.repos.tasks.get(id)
+      if (task && task.feishuResultVersion === task.version) return
+      throw new Error('Feishu text delivery pending')
+    }
+    // In card mode the orchestrator persists deliveredAt only after the target card was actually updated.
     const deadline = Date.now() + 5000
     while (!this.closed) {
       const bindings = this.ctx.store.repos.feishu.messages(id)

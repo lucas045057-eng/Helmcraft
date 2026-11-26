@@ -33,7 +33,7 @@ function content(message: FeishuMessageEvent['message']) {
   return visit(value)
 }
 const help = (owner: boolean) => '直接发送需求，或使用 /run、/status、/tasks、/cancel、/help、/whoami' +
-  (owner ? '、/workers、/approve、/reject、/retry、/drain、/handoff' : '')
+  (owner ? '、/workers、/approve、/reject、/retry、/drain、/handoff、/fix、/accept' : '')
 const active: TaskStatus[] = ['awaiting_approval', 'queued', 'dispatching', 'running', 'awaiting_input', 'cancelling']
 type RunFlags = Extract<ParsedCommand, { name: 'run' }>['flags']
 
@@ -85,18 +85,19 @@ export class MessageRouter {
       return
     }
     if (text === undefined) return reply('暂仅支持文本需求')
-    if (!text) return reply(help(role === 'owner'))
+    const privileged = role === 'owner' || config.permissions.allowRequesterCommands
+    if (!text) return reply(help(privileged))
     if (text.length > this.maxChars) return reply('需求过长')
     const actor: Actor = { id, type: role, channel: 'feishu' }
     const origin: TaskOrigin = { source: 'feishu', feishu: { chatId: m.chat_id, chatType: m.chat_type, messageId: m.message_id } }
     const api = ctx.orchestrator
     const create = async (prompt: string, flags: RunFlags = {}) => {
       const defaults = config.chatDefaults[m.chat_id]
-      if (role !== 'owner' && flags.profile) return reply('仅负责人可指定权限档位')
+      if (!privileged && flags.profile) return reply('仅负责人可指定权限档位')
       const workspaceId = flags.ws ?? defaults?.workspaceId ?? config.defaultWorkspaceId
       if (!workspaceId) return reply('请指定工作区。可用工作区：' + [...new Set(api.listWorkers().flatMap(w => w.workspaces.map(ws => ws.id)))].join('、'))
       const adapter = flags.cli ?? defaults?.adapter
-      const task = await api.createTask({ prompt, origin, workspaceId, profile: flags.profile ?? defaults?.profile ?? 'edit',
+      const task = await api.createTask({ prompt, origin, workspaceId, profile: flags.profile ?? defaults?.profile ?? config.defaultProfile ?? 'edit',
         ...(adapter && { adapter }), ...(flags.worker && { requiredWorkerId: flags.worker }),
         ...(flags.priority !== undefined && { priority: flags.priority }) }, actor)
       await delivery.ensure(task.id)
@@ -111,15 +112,14 @@ export class MessageRouter {
       if (parsed) {
         if (!parsed.ok) return await reply(parsed.error + '。用法：' + parsed.usage)
         const cmd = parsed.cmd
-        if (!canUseCommand(cmd, role, m.chat_type)) return await reply(cmd.name === 'whoami' ? '请私聊使用 /whoami' : '无权执行此指令')
-        const audience = group ? 'requester' : role
+        if (!canUseCommand(cmd, role, m.chat_type, { ...config.permissions, allowGroupCommands: config.allowGroupCommands })) return await reply(cmd.name === 'whoami' ? '请私聊使用 /whoami' : '无权执行此指令')
+        const audience = group ? delivery.groupAudience(m.chat_id) : role
         switch (cmd.name) {
-          case 'help': return await reply(help(role === 'owner'))
+          case 'help': return await reply(help(privileged))
           case 'whoami': return
           case 'run':
           case 'handoff': {
             if (cmd.name === 'run' && !cmd.flags.from) return await create(cmd.prompt, cmd.flags)
-            if (role !== 'owner' || group) return await reply('无权执行此指令')
             const binding = (m.parent_id && delivery.binding(m.parent_id)) || (m.root_id && delivery.binding(m.root_id))
             const ref = cmd.flags.from ?? (binding && binding.taskId)
             if (!ref) return await reply('请引用任务卡片或指定 --from')
@@ -133,6 +133,20 @@ export class MessageRouter {
             await delivery.ensure(child.id)
             return await reply('已创建接力任务 #' + child.taskNo)
           }
+          case 'fix': {
+            const source = get(cmd.taskRef)
+            const child = await api.handoff(source.id, actor, { intent: 'fix', expectedVersion: source.version, origin })
+            await delivery.ensure(child.id)
+            return await reply('已创建修复任务 #' + child.taskNo)
+          }
+          case 'accept': {
+            const task = get(cmd.taskRef)
+            const run = task.runs[0]
+            if (!run) throw new HubError('RUN_NOT_FOUND', 404)
+            const pointer = ctx.store.repos.pointers.get(run.workerId, run.workspaceId)
+            await api.acceptRun(run.workerId, run.workspaceId, actor, { runId: run.id, expectedAcceptedRunId: pointer?.lastAcceptedRunId ?? null })
+            return await reply('已采纳任务 #' + task.taskNo)
+          }
           case 'workers':
             await delivery.reply(m.chat_id, m.message_id, { type: 'interactive', card: renderWorkersCard(api.listWorkers(), config.card.cardMaxBytes) })
             return
@@ -140,11 +154,11 @@ export class MessageRouter {
           case 'tasks': case 'status': {
             if (cmd.name === 'status' && cmd.taskRef) {
               const task = get(cmd.taskRef)
-              const sent = await delivery.reply(m.chat_id, m.message_id, { type: 'interactive', card: delivery.render(task, 'reply', audience) })
+              const sent = await delivery.reply(m.chat_id, m.message_id, { type: 'interactive', card: delivery.render(task, 'reply', audience, m.chat_type) })
               delivery.bind({ ...origin.feishu!, messageId: sent.messageId, taskId: task.id, role: 'reply', audience, createdAt: now })
             } else {
               const status = cmd.name === 'tasks' ? cmd.status : active
-              const mine = role !== 'owner' || (cmd.name === 'tasks' && cmd.scope === 'mine')
+              const mine = cmd.name === 'tasks' ? cmd.scope === 'mine' : role !== 'owner'
               const list = api.listTasks({ limit: 10, ...(status && { status }), ...(mine && { requesterId: id }) }, actor)
               await delivery.reply(m.chat_id, m.message_id, { type: 'interactive', card: renderTaskListCard(list.items, audience, config.card.cardMaxBytes) })
             }

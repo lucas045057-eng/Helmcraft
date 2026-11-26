@@ -9,6 +9,8 @@ export type TaskCardModel = Pick<TaskDetailView, 'id' | 'taskNo' | 'status' | 'v
     harness?: { tamperTotal?: number; board?: BoardFileDiff[]; warnings?: string[]; verification?: RunHarnessSummary['verification']; fromRunId: string;
       handoffTargets: string[]; handoffFrom?: { taskNo: number; adapter: string; intent: 'relay' | 'fix' } }
     progress?: string[]; panelUrl?: string; requiredWorkerId?: string; filesChanged?: number; reason?: string
+    verificationState?: NonNullable<RunHarnessSummary['verification']>['state'] | undefined
+    resultVisible?: boolean; handoffAllowed?: boolean; fixRunId?: string
     cardMaxBytes?: number; cardResultMaxChars?: number
   }
 const states = {
@@ -24,8 +26,8 @@ function card(title: string, color: string, elements: object[]) {
   return { schema: '2.0', config: { update_multi: true, width_mode: 'fill' }, header: { title: plain(title), template: color }, body: { elements } }
 }
 const bytes = (value: object) => Buffer.byteLength(JSON.stringify(value))
-function fit(title: string, color: string, fixed: object[], fields: string[], limit: number) {
-  const build = () => card(title, color, [...fields.filter(Boolean).map(line), ...fixed])
+function fit(title: string, color: string, fixed: object[], fields: string[], limit: number, field: (value: string) => object = line) {
+  const build = () => card(title, color, [...fields.filter(Boolean).map(field), ...fixed])
   // Fields are displayed in reverse truncation priority: prompt, result, progress.
   for (let i = fields.length - 1; i >= 0 && bytes(build()) > limit; i--) {
     const original = fields[i]!
@@ -57,6 +59,42 @@ function verificationBadge(info: NonNullable<RunHarnessSummary['verification']>,
     MANIFEST_INCOMPLETE: '文件清单不完整', COMMAND_UNAVAILABLE: '验证命令不可用', RUN_LOST: '节点失联', INTERNAL: '内部错误' }
   return (info.state === 'skipped' ? '⚠️ 已跳过：' : '⚠️ 未验证：') + (info.reason ? reasons[info.reason] : '未知原因')
 }
+export function renderStreamingCard(m: TaskCardModel, audience: Audience): CardJson {
+  const [label, color] = states[m.status]
+  const ended = terminal(m.status)
+  const title = ['#' + m.taskNo, m.adapter ?? '自动', label]
+  const fields: string[] = []
+  const actions: object[] = []
+  const h = audience === 'owner' ? m.harness : undefined
+  if (ended) {
+    if (m.finishedAt !== null && m.startedAt !== null) title.push(Math.max(0, Math.floor((m.finishedAt - m.startedAt) / 1000)) + 's')
+    if (m.filesChanged !== undefined) title.push('改动 ' + m.filesChanged + ' 个文件')
+    if (m.resultDeliveryStatus === 'pending_review') fields.push('结果等待负责人审核')
+    if (m.resultDeliveryStatus === 'suppressed') fields.push('负责人未发送结果')
+    if (h?.verification) fields.push(verificationBadge(h.verification, h.tamperTotal ?? 0))
+    else if (m.verificationState) {
+      const badges = { passed: '✅ 验证通过', failed: '❌ 验证失败', skipped: '已跳过验证', unverified: '未验证', pending: '等待验证', running: '验证中' }
+      fields.push(badges[m.verificationState])
+    }
+    const changes = h?.board?.filter(item => ['created', 'modified', 'deleted'].includes(item.change))
+    if (changes?.length) fields.push('黑板：' + changes.map(item => item.file + ' ' + item.change).join(' · '))
+    if (m.allowedActions.includes('retry')) actions.push(button(m, 'retry', '重试'))
+    const fix = m.fixRunId ?? (h?.verification?.state === 'failed' ? h.fromRunId : undefined)
+    if (fix && m.handoffAllowed !== false && m.allowedActions.includes('followup')) {
+      actions.push(button(m, 'fix', '带报错修复', { r: fix }))
+    }
+  } else {
+    const lines = (m.progress ?? []).slice(-8)
+    if (m.status === 'awaiting_input' && m.inputRequest) lines.push(m.inputRequest.question, '直接回复本卡片作答')
+    fields.push(lines.length ? lines.join('\n') : m.scheduleHint || label)
+    if (m.allowedActions.includes('cancel')) actions.push(button(m, 'cancel', '中止'))
+    if (audience === 'owner' && m.panelUrl) actions.push({ tag: 'button', text: plain('打开面板'),
+      behaviors: [{ type: 'open_url', default_url: m.panelUrl }] })
+  }
+  const markdown = (content: string) => ({ tag: 'markdown', content: content.replace(/([\\`*_\[\]<>])/gu, '\\$1') })
+  return fit(title.join(' · '), color, actions, fields.map(text => displayText(text, audience)), m.cardMaxBytes ?? 28672, markdown)
+}
+
 export function renderProgressCard(m: TaskCardModel, audience: Audience): CardJson {
   const [label, color] = states[m.status]
   const fields = [displayText(m.prompt, audience)]
@@ -87,7 +125,7 @@ export function renderProgressCard(m: TaskCardModel, audience: Audience): CardJs
       break
     }
     case 'succeeded':
-      if (audience === 'owner' || ['not_required', 'delivered'].includes(m.resultDeliveryStatus))
+      if (m.resultVisible ?? (audience === 'owner' || ['not_required', 'delivered'].includes(m.resultDeliveryStatus)))
         fields.push(safe(m.resultSummary ?? '').slice(0, m.cardResultMaxChars ?? 2000))
       else fields.push(m.resultDeliveryStatus === 'pending_review' ? '结果等待负责人审核' : '负责人未发送结果')
       elements.push(line('回复本卡片可继续对话'))
@@ -103,6 +141,8 @@ export function renderProgressCard(m: TaskCardModel, audience: Audience): CardJs
   if (m.startedAt !== null) elements.push(line('耗时 ' + Math.max(0, Math.floor(((m.finishedAt ?? m.updatedAt) - m.startedAt) / 1000)) + ' 秒'))
   if (allowed.includes('cancel')) elements.push(button(m, 'cancel', m.status === 'running' ? '中止' : '取消'))
   const h = audience === 'owner' ? m.harness : undefined
+  if (!h && m.handoffAllowed && allowed.includes('followup')) elements.push(button(m, 'handoff', '接力'))
+  if (!h && m.fixRunId && allowed.includes('followup')) elements.push(button(m, 'fix', '带报错修复', { r: m.fixRunId }))
   if (h) {
     if (h.handoffFrom) fields.push('接力自 #' + h.handoffFrom.taskNo + '（' + h.handoffFrom.adapter + ' → ' + (m.adapter ?? '自动') + '）')
     const optional: object[] = []
@@ -111,8 +151,8 @@ export function renderProgressCard(m: TaskCardModel, audience: Audience): CardJs
       const board = h.board?.filter(f => ['created', 'modified', 'deleted'].includes(f.change))
       if (board?.length) optional.push(line('黑板：' + board.map(f => f.change === 'deleted' ? '⚠️ ' + f.file + ' 已删除' : f.file + ' +' + f.added + '/−' + f.removed).join(' · ')))
       if (h.warnings?.length) optional.push(line(h.warnings.join(' · ')))
-      if (allowed.includes('followup') && h.verification?.state === 'failed') optional.push(button(m, 'fix', '带报错修复', { r: h.fromRunId }))
-      if (allowed.includes('followup') && h.handoffTargets.length) {
+      if (m.handoffAllowed !== false && allowed.includes('followup') && h.verification?.state === 'failed') optional.push(button(m, 'fix', '带报错修复', { r: h.fromRunId }))
+      if (m.handoffAllowed !== false && allowed.includes('followup') && h.handoffTargets.length) {
         optional.push({ tag: 'form', name: 'handoff', elements: [
           { tag: 'select_static', name: 'cli', initial_option: h.handoffTargets[0], options: h.handoffTargets.map(value => ({ value, text: plain(value) })) },
           { tag: 'input', name: 'prompt', placeholder: plain('补充说明'), max_length: 1000 },

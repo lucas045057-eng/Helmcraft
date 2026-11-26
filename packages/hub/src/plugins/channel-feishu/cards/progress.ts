@@ -15,7 +15,7 @@ export function displayText(value: string, audience: Audience) {
   return prose.split(/\r?\n/).map(line => absolutePath.test(line) || shellSyntax.test(line) ||
     shellCommand.test(line) || /\bstderr\b|https?:\/\//iu.test(line) ? hidden : line).join('\n')
 }
-export function extractProgress(events: readonly StoredEvent[], audience: Audience): string[] {
+export function extractProgress(events: readonly StoredEvent[], audience: Audience, limit = 5, scrub = redact): string[] {
   const lines: string[] = []
   for (const e of events) {
     let text: string
@@ -25,12 +25,23 @@ export function extractProgress(events: readonly StoredEvent[], audience: Audien
       text = audience === 'requester' ? '正在进行自动验证' : '验证 #' + e.attempt +
         (failed.length ? ' 未通过：' + failed.join('、') : '：' + e.commands.join('、'))
     }
+    else if (e.kind === 'agent' && e.event.type === 'command' && audience === 'owner') {
+      const { command, exitCode } = e.event
+      const summary = scrub(command).replace(/\s+/gu, ' ').trim().slice(0, 210)
+      text = (exitCode === null ? '▶' : exitCode === 0 ? '✓' : '✗') + ' $ ' + summary +
+        (exitCode !== null && exitCode !== 0 ? ' (exit ' + exitCode + ')' : '')
+    }
+    else if (e.kind === 'agent' && e.event.type === 'thinking' && audience === 'owner') {
+      const first = scrub(e.event.text).trim().split(/\r?\n/u, 1)[0]
+      if (!first) continue
+      text = '💭 ' + first.trim().slice(0, 140)
+    }
     else if (e.kind === 'agent' && e.event.type === 'tool_use') text = audience === 'owner' ? e.event.summary : '使用工具'
     else if (e.kind === 'agent' && e.event.type === 'file_change') text = '修改文件 ' + e.event.path
     else if (e.kind === 'agent' && e.event.type === 'message') text = audience === 'requester' ? '更新执行说明' : e.event.text
     else continue
-    lines.push(...displayText(text, audience).split(/\r?\n/).filter(Boolean).slice(-5).map(v => v.slice(0, 256)))
+    lines.push(...displayText(scrub(text), audience).split(/\r?\n/).filter(Boolean).slice(-limit).map(v => v.slice(0, 256)))
   }
-  return lines.slice(-5)
+  return lines.slice(-limit)
 }
 export const ProgressExtractor = extractProgress

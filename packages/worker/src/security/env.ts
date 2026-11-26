@@ -36,7 +36,7 @@ export function buildEnvironment(source: NodeJS.ProcessEnv, adapter: { passEnv: 
   }
   const overrideKeys = new Set(allowedOverrideKeys.map(key => key.toUpperCase()))
   for (const [key, value] of Object.entries(overrides)) {
-    if (!overrideKeys.has(key.toUpperCase()) || forbidden.test(key)) continue
+    if ((!overrideKeys.has('*') && !overrideKeys.has(key.toUpperCase())) || forbidden.test(key)) continue
     put(key, value)
     if (value.length >= 8) knownSecrets[key] = value
   }

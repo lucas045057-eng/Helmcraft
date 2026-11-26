@@ -8,18 +8,18 @@ import { HubError } from '../../services/errors.js'
 import type { Repos } from '../../services/store.js'
 import { onHotUpdate } from '../../kernel/hot-update.js'
 
-export interface PolicyConfig { ownerOpenIds: string[]; requesterAllowlist: string[]; requesterPolicy?: 'allowlist' | 'chat'; allowedChatIds?: string[] }
+export interface PolicyConfig { autoApproveAll?: boolean; ownerOpenIds: string[]; requesterAllowlist: string[]; requesterPolicy?: 'allowlist' | 'chat'; allowedChatIds?: string[] }
 type Cached = { rule: PolicyRule; pattern?: RegExp }
 const readRevision = (db: Repos) => Number((db.prepare("SELECT value FROM meta WHERE key='policy_revision'").get() as { value: string } | undefined)?.value ?? 0)
 export class Policy extends Service implements PolicyService {
   static inject = ['store', 'clock']
-  static Config = z.strictObject({ ownerOpenIds: z.array(z.string()), requesterAllowlist: z.array(z.string()),
+  static Config = z.strictObject({ autoApproveAll: z.boolean().default(false), ownerOpenIds: z.array(z.string()), requesterAllowlist: z.array(z.string()),
     requesterPolicy: z.enum(['allowlist', 'chat']).optional(), allowedChatIds: z.array(z.string()).optional() })
   private rules: Cached[] = []
   constructor(ctx: Context, private config: PolicyConfig) { super(ctx, 'policy') }
   [Service.init]() {
     this.refresh()
-    onHotUpdate<PolicyConfig>(this.ctx, ['ownerOpenIds', 'requesterAllowlist', 'requesterPolicy', 'allowedChatIds'], next => { this.config = next })
+    onHotUpdate<PolicyConfig>(this.ctx, ['ownerOpenIds', 'requesterAllowlist', 'requesterPolicy', 'allowedChatIds', 'autoApproveAll'], next => { this.config = next })
   }
   private refresh() {
     this.rules = this.ctx.store.repos.select().from(policyRules).all().map(row => {
@@ -55,6 +55,7 @@ export class Policy extends Service implements PolicyService {
     if (input.source === 'feishu' && !this.config.ownerOpenIds.includes(input.actor.id) &&
         !this.config.requesterAllowlist.includes(input.actor.id) && !(input.actor.type === 'requester' && input.chatId &&
         this.config.requesterPolicy === 'chat' && this.config.allowedChatIds?.includes(input.chatId))) return { ruleId: null, decision: 'deny' }
+    if (this.config.autoApproveAll && (owner || input.actor.type === 'requester')) return { ruleId: null, decision: 'auto_approve' }
     const profile = input.actor.type === 'requester' && input.profile === 'full' ? 'edit' : input.profile
     const fits = (values: readonly string[] | undefined, value: string | undefined) => !values || (value !== undefined && values.includes(value))
     const found = this.rules.find(({ rule, pattern }) => {

@@ -29,12 +29,13 @@ export function resolveHarness(input: ResolveHarnessInput): Omit<HarnessDirectiv
 export interface AutoAcceptInput {
   trust: 'owner' | 'requester'; profile: Profile; runStatus: 'succeeded' | 'failed' | 'timed_out' | 'cancelled'
   verificationRequested: boolean; verification?: VerificationSummary
+  allowRequesterAutoAccept?: boolean
   failedAttempt?: boolean
   predecessorAccepted: boolean            // workspace_seq = 1，或 last_accepted_seq = workspace_seq − 1
 }
 export function autoAcceptDecision(input: AutoAcceptInput): { accept: boolean; reason: string } {
   const { verification: result } = input
-  if (input.trust === 'requester') return { accept: false, reason: 'REQUESTER' }
+  if (input.trust === 'requester' && !input.allowRequesterAutoAccept) return { accept: false, reason: 'REQUESTER' }
   if (input.profile === 'readonly') return { accept: false, reason: 'READONLY' }
   if (input.runStatus !== 'succeeded') return { accept: false, reason: 'CLI_NOT_SUCCEEDED' }
   if ((input.failedAttempt || result?.autoFix?.attempts) && result?.status !== 'passed') {

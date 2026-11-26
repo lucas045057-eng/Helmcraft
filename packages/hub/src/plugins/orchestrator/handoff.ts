@@ -6,8 +6,8 @@ import { HubError } from '../../services/errors.js'
 import { buildVerifiedFacts, harnessView } from './harness.js'
 import { taskState } from './views.js'
 
-export function handoffSource(db: Repos, task: TaskRow, actor: Actor, query: HandoffPreviewQuery, getWorker: (id: string) => WorkerView | undefined) {
-  if (actor.type !== 'owner') throw new HubError('FORBIDDEN', 403)
+export function handoffSource(db: Repos, task: TaskRow, actor: Actor, query: HandoffPreviewQuery, getWorker: (id: string) => WorkerView | undefined, allowRequesterHandoff = false) {
+  if (actor.type !== 'owner' && !(allowRequesterHandoff && actor.type === 'requester' && task.requesterId === actor.id)) throw new HubError('FORBIDDEN', 403)
   if (!allowedActions(taskState(db, task), actor).includes('followup')) throw new HubError('INVALID_TRANSITION', 409)
   const from = query.fromRunId ? db.runs.get(query.fromRunId) : db.runs.forTask(task.id).find(r => r.startedAt !== null && r.finishedAt !== null)
   if (query.fromRunId && from?.taskId !== task.id) throw new HubError('RUN_NOT_FOUND', 404)
@@ -16,18 +16,18 @@ export function handoffSource(db: Repos, task: TaskRow, actor: Actor, query: Han
   const intent = query.intent ?? 'relay'
   const adapter = query.adapter ?? (intent === 'fix' ? from.adapter as AdapterId : undefined)
   const resume = intent === 'fix' && adapter === from.adapter && !!from.cliSessionId && !!worker?.adapters.find(a => a.id === adapter)?.features.resume
-  return { from, adapter, resume, intent, worker }
+  return { from, adapter, resume, intent, worker, trust: actor.type }
 }
 
 export function preview(db: Repos, task: TaskRow, source: ReturnType<typeof handoffSource>, now: number, order: AdapterId[], boardEnabled: boolean): HandoffPreview {
   const { from, worker, adapter, resume, intent } = source
   const ready = worker?.adapters.filter(a => a.status === 'ready' && worker.workspaces.find(w => w.id === from.workspaceId)?.allowedAdapters.includes(a.id))
   const target = adapter ?? [...(task.adapterPrefsJson ?? []), ...order].find(id => ready?.some(a => a.id === id)) as AdapterId | undefined
-  const facts = buildVerifiedFacts(db, { ...task, requesterType: 'owner', handoffFromRunId: from.id, harnessRequestJson: { v: 1, intent } },
+  const facts = buildVerifiedFacts(db, { ...task, requesterType: source.trust, handoffFromRunId: from.id, harnessRequestJson: { v: 1, intent } },
     { id: runId(now), workspaceId: from.workspaceId, workerId: from.workerId, adapter: target ?? from.adapter as AdapterId }, now)
   if (!facts) throw new HubError('INVALID_TRANSITION', 409, { reason: 'FACTS_TOO_LARGE' })
   const snapshots = harnessView(db, from).board
-  const board = snapshots.post ?? snapshots.pre
+  const board = source.trust === 'owner' || boardEnabled ? snapshots.post ?? snapshots.pre : null
   const warnings: HandoffPreview['warnings'] = []
   if (worker?.connection !== 'online') warnings.push('WORKER_OFFLINE')
   if (!worker?.protocolCapabilities?.includes('blackboard.v1')) warnings.push('WORKER_NO_BLACKBOARD')
@@ -38,8 +38,8 @@ export function preview(db: Repos, task: TaskRow, source: ReturnType<typeof hand
   const boardDir = board?.dir ?? 'absent'
   const agentsMd = board?.agentsMd.status ?? 'absent'
   const promptPreview = composeHarnessPrompt({ adapter: facts.currentRun.adapter, nonce: PREVIEW_NONCE, userPrompt: HANDOFF_DEFAULT_PROMPTS[intent],
-    mode: resume ? 'resume' : 'handoff', trust: 'owner', board: !boardEnabled ? 'off' : task.profile === 'readonly' ? 'read' : 'write',
-    bootstrap: boardEnabled && task.profile !== 'readonly' && !resume && board?.dir === 'absent', boardDir, agentsMd,
+    mode: resume ? 'resume' : 'handoff', trust: source.trust, board: !boardEnabled ? 'off' : task.profile === 'readonly' ? 'read' : 'write',
+    bootstrap: source.trust === 'owner' && boardEnabled && task.profile !== 'readonly' && !resume && board?.dir === 'absent', boardDir, agentsMd,
     paths: { board: prefix + '.board', agents: prefix + 'AGENTS.md' }, verifyCommandIds: [],
     factsJson: renderFactsJson(facts, { capturedAt: board?.capturedAt ?? now, cwd: task.subdir ?? '.', agentsMd, board: { dir: boardDir,
       files: board?.files.map(f => ({ file: f.file, bytes: f.bytes, status: f.status, budget: BOARD_FILES[f.file].budgetBytes, overBudget: f.overBudget, schemaOk: f.schemaOk })) ?? [] } }),

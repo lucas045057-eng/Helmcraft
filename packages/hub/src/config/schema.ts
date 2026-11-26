@@ -9,6 +9,11 @@ const HarnessWorkspacePolicy = z.strictObject({
   verify: z.boolean().optional(), allowRequesterVerify: z.boolean().optional(), autoFixMaxRetries: AutoFix.optional(),
 })
 export const HubConfigSchema = z.strictObject({
+  permissions: z.strictObject({
+    allowRequesterCommands: z.boolean().default(false), autoApproveAll: z.boolean().default(false),
+    disableResultGating: z.boolean().default(false), disableRequesterLimits: z.boolean().default(false),
+    allowRequesterAutoAccept: z.boolean().default(false), allowRequesterHandoff: z.boolean().default(false),
+  }).prefault({}),
   server: z.strictObject({ host: z.string().default('127.0.0.1'), port: z.number().int().min(0).max(65_535).default(8080),
     publicUrl: z.url().default('http://localhost:8080'), trustProxy: z.array(z.string()).default([]),
     allowInsecureWorker: z.boolean().default(false), timezone: z.string().refine(value => {
@@ -51,6 +56,8 @@ export const HubConfigSchema = z.strictObject({
     ownerOpenIds: z.array(z.string()).default([]), requesterAllowlist: z.array(z.string()).default([]),
     requesterPolicy: z.enum(['allowlist', 'chat']).default('allowlist'), allowedChatIds: z.array(z.string()).default([]),
     requesterReplyPolicy: z.enum(['auto', 'owner_review']).default('auto'), approvalTarget: z.literal('owner_p2p').default('owner_p2p'),
+    deliveryMode: z.enum(['hybrid', 'card']).default('card'), groupAudience: z.enum(['requester', 'owner']).default('requester'),
+    allowGroupCommands: z.boolean().default(false), defaultProfile: Profile.optional(),
     defaultWorkspaceId: WorkspaceId.optional(), chatDefaults: z.record(z.string(), z.strictObject({
       workspaceId: WorkspaceId.optional(), adapter: AdapterId.optional(), profile: Profile.optional(),
     })).default({}), staleMessageMs: ms(600_000),

@@ -72,20 +72,24 @@ export function advancePointer(db: Repos, run: RunRow, by: string, now: number, 
     expected === undefined ? undefined : sql`${workspacePointers.lastAcceptedRunId} is ${expected}`)).run().changes === 1
 }
 export function autoAccept(db: Repos, run: RunRow, trust: 'requester' | 'owner', now: number,
-  verificationRequested: boolean, verification?: VerificationSummary, failedAttempt = false) {
+  verificationRequested: boolean, verification?: VerificationSummary, failedAttempt = false, allowRequesterAutoAccept = false) {
   if (!run.workspaceSeq || run.status !== 'succeeded') return 'ineligible'
   const pointer = db.pointers.get(run.workerId, run.workspaceId)
-  const decision = autoAcceptDecision({ trust, profile: run.profile as Profile, runStatus: run.status, verificationRequested, failedAttempt,
+  const decision = autoAcceptDecision({ trust, profile: run.profile as Profile, runStatus: run.status, verificationRequested, failedAttempt, allowRequesterAutoAccept,
     ...(verification && { verification }), predecessorAccepted: (pointer?.lastAcceptedSeq ?? 0) === run.workspaceSeq - 1 })
   if (!decision.accept) return 'ineligible'
   return advancePointer(db, run, 'auto', now) ? 'accepted' : 'stale'
 }
-export function acceptRun(db: Repos, worker: string, workspace: string, actor: Actor, input: AcceptRunRequest, now: number) {
-  if (actor.type !== 'owner') throw new HubError('FORBIDDEN', 403)
+export function acceptRun(db: Repos, worker: string, workspace: string, actor: Actor, input: AcceptRunRequest, now: number, allowRequesterHandoff = false) {
+  if (actor.type !== 'owner' && !(actor.type === 'requester' && allowRequesterHandoff)) throw new HubError('FORBIDDEN', 403)
   const row = db.pointers.get(worker, workspace)
   if (!row) throw new HubError('UNKNOWN_WORKSPACE', 422)
   const run = db.runs.get(input.runId)
   if (!run || run.workerId !== worker || run.workspaceId !== workspace) throw new HubError('RUN_NOT_FOUND', 404)
+  if (actor.type === 'requester') {
+    const task = db.tasks.get(run.taskId)
+    if (task?.requesterType !== 'requester' || task.requesterId !== actor.id) throw new HubError('FORBIDDEN', 403)
+  }
   if (run.status !== 'succeeded') throw new HubError('INVALID_TRANSITION', 409, { reason: 'RUN_NOT_SUCCEEDED' })
   if (run.profile === 'readonly' || run.workspaceSeq === null) throw new HubError('INVALID_TRANSITION', 409, { reason: 'NOT_WRITE_RUN' })
   if (row.lastAcceptedRunId !== input.expectedAcceptedRunId) throw new HubError('VERSION_CONFLICT', 409, { current: pointerView(db, row) })

@@ -28,13 +28,15 @@ export class ActionHandler {
     const row = delivery.binding(event.context.open_message_id)
     const role = identity(delivery.config, id, event.context.open_chat_id ?? row?.chatId ?? '', row?.chatType === 'group')
     const ownerOnly = handoff || ['approve', 'reject', 'publish_result', 'suppress_result'].includes(a)
-    if (ownerOnly && role !== 'owner') return toast('仅负责人可操作', 'error')
-    if (handoff && (row?.audience !== 'owner' || row.chatType !== 'p2p')) return toast('仅负责人可操作', 'error')
+    const delegated = role === 'requester' && (handoff ? delivery.config.permissions.allowRequesterHandoff :
+      (a === 'approve' || a === 'reject') && delivery.config.permissions.allowRequesterCommands)
+    if (ownerOnly && role !== 'owner' && !delegated) return toast('仅负责人可操作', 'error')
+    if (handoff && (row?.chatType === 'group' ? !delivery.config.allowGroupCommands : row?.audience !== 'owner' && !delegated)) return toast('仅负责人可操作', 'error')
     if (role === 'unauthorized') return toast('暂无操作权限', 'error')
     if (!row || row.dead || row.taskId !== t || !row.audience ||
       !['approval_card', 'review_card', 'progress_card', 'reply'].includes(row.role)) return toast('卡片已过期', 'error')
     const actor: Actor = { type: role, id, channel: 'feishu' }
-    const audience = row.audience
+    const audience = row.chatType === 'group' ? delivery.groupAudience(row.chatId) : row.audience
     const key = 'card:' + t
     const immediate = await this.mutex.tryLock(key)
     const release = immediate ?? await this.mutex.tryLock(key, 200)
@@ -43,7 +45,7 @@ export class ActionHandler {
     let timedOut = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const render = (message: string, success: boolean) => {
-      const desired = delivery.desired(t, row.role, audience)
+      const desired = delivery.desired(t, row.role, row.chatType === 'group' ? delivery.groupAudience(row.chatId) : audience, row.chatType)
       if (!timedOut) delivery.updater.markSent(row.messageId, desired)
       return { ...toast(message, success ? 'success' : 'info'), card: { type: 'raw' as const, data: desired.card } }
     }
@@ -51,7 +53,7 @@ export class ActionHandler {
       const api = ctx.orchestrator
       const task = api.getTask(t, actor)
       if (!task || (role !== 'owner' && task.requester.id !== id)) return toast('无权操作此任务', 'error')
-      if (row.audience === 'owner' && role !== 'owner') return toast('仅负责人可操作', 'error')
+      if (row.chatType === 'p2p' && row.audience === 'owner' && role !== 'owner') return toast('仅负责人可操作', 'error')
       if (!task.allowedActions.includes(actionKeys[a])) {
         if (task.version !== ver || (ownerOnly && task.resultDeliveryStatus !== 'pending_review'))
           return render(immediate && !['suppress_result', 'publish_result'].includes(a) ? '任务状态已变化' : '已处理', false)
@@ -67,7 +69,7 @@ export class ActionHandler {
           const child = await api.handoff(t, actor, { intent: a === 'fix' ? 'fix' : 'relay', expectedVersion: ver,
             ...(parsed.data.r && { fromRunId: parsed.data.r }), ...(adapter?.success && { adapter: adapter.data }),
             ...(typeof values.prompt === 'string' && values.prompt && { prompt: values.prompt }),
-            origin: { source: 'feishu', feishu: { chatType: 'p2p', chatId: row.chatId, messageId: row.messageId } } },
+            origin: { source: 'feishu', feishu: { chatType: row.chatType, chatId: row.chatId, messageId: row.messageId } } },
           { idempotencyKey: stableHash([row.messageId, a, ver, parsed.data.r, values.cli, values.prompt]) })
           await delivery.ensure(child.id)
           return toast('已创建接力任务 #' + child.taskNo, 'success')

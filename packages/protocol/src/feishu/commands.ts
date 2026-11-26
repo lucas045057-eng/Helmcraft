@@ -6,7 +6,7 @@ export type ParsedCommand =
   | { name: 'handoff'; flags: { cli: AdapterId; from?: string }; prompt: string }
   | { name: 'run'; flags: { from?: string; cli?: AdapterId; ws?: string; worker?: string; profile?: Profile; priority?: number }; prompt: string }
   | { name: 'status'; taskRef?: TaskRef } | { name: 'tasks'; scope: 'mine' | 'all'; status?: TaskStatus[] }
-  | { name: 'workers' } | { name: 'cancel' | 'retry' | 'approve'; taskRef: TaskRef }
+  | { name: 'workers' } | { name: 'cancel' | 'retry' | 'approve' | 'fix' | 'accept'; taskRef: TaskRef }
   | { name: 'reject'; taskRef: TaskRef; reason?: string } | { name: 'drain'; workerId: string; on: boolean }
   | { name: 'help' } | { name: 'whoami' }
 
@@ -17,6 +17,8 @@ const usage = {
   tasks: '/tasks [mine|all] [--status=<status,...>]',
   workers: '/workers',
   cancel: '/cancel <taskRef>',
+  fix: '/fix <taskRef>',
+  accept: '/accept <taskRef>',
   retry: '/retry <taskRef>',
   approve: '/approve <taskRef>',
   reject: '/reject <taskRef> [理由]',
@@ -173,10 +175,14 @@ export type CommandParseResult = { ok: true; cmd: ParsedCommand } | { ok: false;
 
 export function canUseCommand(
   command: ParsedCommand, role: 'owner' | 'requester' | 'unauthorized', chatType: 'p2p' | 'group',
+  options: { allowGroupCommands?: boolean; allowRequesterCommands?: boolean; allowRequesterHandoff?: boolean } = {},
 ): boolean {
   if (command.name === 'whoami') return chatType === 'p2p'
-  if (command.name === 'handoff' || (command.name === 'run' && command.flags.from)) return role === 'owner' && chatType === 'p2p'
-  if (role === 'owner') return true
+  const privileged = role === 'owner' || (role === 'requester' && options.allowRequesterCommands === true)
+  if (command.name === 'fix' || command.name === 'accept' || command.name === 'handoff' || (command.name === 'run' && command.flags.from)) {
+    return privileged && (role === 'owner' || options.allowRequesterHandoff === true) && (chatType === 'p2p' || options.allowGroupCommands === true)
+  }
+  if (privileged) return true
   if (role !== 'requester') return false
   switch (command.name) {
     case 'approve':

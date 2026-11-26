@@ -81,6 +81,7 @@ export type TaskEvent = EventBase & (
 )
 
 export interface ReduceContext {
+  allowRequesterCommands?: boolean
   now: number
   newRunId?: RunId
   validateOverrides?: (overrides: ApprovalOverrides, task: TaskState) => ErrorCode | undefined
@@ -138,7 +139,7 @@ const finishEvents: Readonly<Partial<Record<TaskEventType, RunStatus>>> = {
   RUN_SUCCEEDED: 'succeeded', RUN_FAILED: 'failed', RUN_TIMED_OUT: 'timed_out', RUN_CANCELLED: 'cancelled',
 }
 
-function canAct(task: TaskState | undefined, type: TaskEventType, actor: Actor): boolean {
+function canAct(task: TaskState | undefined, type: TaskEventType, actor: Actor, allowRequesterCommands = false): boolean {
   if (workerEvents.has(type)) return actor.type === 'worker'
   if (systemEvents.has(type)) return actor.type === 'system'
   if (type === 'SUBMIT') return actor.type === 'owner' || actor.type === 'requester'
@@ -147,7 +148,8 @@ function canAct(task: TaskState | undefined, type: TaskEventType, actor: Actor):
   if (!task || actor.type !== 'requester' || task.requester.type !== 'requester' || task.requester.id !== actor.id) return false
   switch (type) {
     case 'INPUT_PROVIDE': return true
-    case 'RETRY': return task.requesterCanRetry === true
+    case 'APPROVE': case 'REJECT': return allowRequesterCommands
+    case 'RETRY': return allowRequesterCommands || task.requesterCanRetry === true
     case 'CANCEL': return task.status === 'awaiting_approval' || task.status === 'queued'
       || (task.status === 'running' && task.requesterCanCancelRunning !== false)
     default: return false
@@ -202,7 +204,7 @@ export function reduce(task: TaskState | null | undefined, event: TaskEvent, ctx
   }
   const cell = TRANSITIONS[task.status][event.type]
   if (!cell) return invalid(task, event)
-  if (!canAct(task, event.type, event.actor)) return failure('FORBIDDEN', 403)
+  if (!canAct(task, event.type, event.actor, ctx.allowRequesterCommands)) return failure('FORBIDDEN', 403)
   if (cell === '=') return { next: task, writes: [], effects: [{ type: 'audit.noop', event: event.type, actor: event.actor }] }
   if ('runId' in event && event.runId !== task.currentRunId) {
     return { next: task, writes: [], effects: [{ type: 'metric.stale_run_event', runId: event.runId }] }
@@ -325,12 +327,12 @@ export function reduce(task: TaskState | null | undefined, event: TaskEvent, ctx
   return { next, writes, effects }
 }
 
-export function allowedActions(task: TaskState, actor: Actor): TaskAction[] {
+export function allowedActions(task: TaskState, actor: Actor, allowRequesterCommands = false): TaskAction[] {
   const result: TaskAction[] = []
   const actions = { approve: 'APPROVE', reject: 'REJECT', cancel: 'CANCEL', retry: 'RETRY', input: 'INPUT_PROVIDE' } as const
   for (const [action, event] of Object.entries(actions) as [keyof typeof actions, typeof actions[keyof typeof actions]][]) {
     const cell = TRANSITIONS[task.status][event]
-    if (!cell || cell === '=' || !canAct(task, event, actor)) continue
+    if (!cell || cell === '=' || !canAct(task, event, actor, allowRequesterCommands)) continue
     if (event === 'RETRY' && task.attemptCount >= task.maxAttempts && actor.type !== 'owner') continue
     if (event === 'INPUT_PROVIDE' && !task.inputRequestId) continue
     result.push(action)

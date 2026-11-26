@@ -190,7 +190,8 @@ export class RunManager {
     const invocation = build(command.prompt)
     const reservedEnv = new Set(Object.keys(invocation.env).map(key => key.toUpperCase()))
     const { env, knownSecrets } = buildEnvironment(process.env, { ...adapterConfig, env: { ...adapterConfig.env, ...invocation.env } },
-      command.env, this.config.security.allowedEnvOverrideKeys.filter(key => !reservedEnv.has(key.toUpperCase())))
+      Object.fromEntries(Object.entries(command.env ?? {}).filter(([key]) => !reservedEnv.has(key.toUpperCase()))),
+      this.config.security.allowedEnvOverrideKeys)
     const run: ActiveRun = { command, profile, workspacePath: workspace.path, state: 'starting', started: this.clock.monotonic(), lastOutput: this.clock.monotonic(),
       abort: new AbortController(), grace: new AbortController(), discard: false, ...this.completion() }
     if (command.harness && this.config.harness.enabled) {

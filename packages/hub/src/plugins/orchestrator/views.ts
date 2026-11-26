@@ -41,7 +41,7 @@ export function runView(run: RunRow, db?: Repos): RunView {
     dispatchedAt: run.dispatchedAt, startedAt: run.startedAt, finishedAt: run.finishedAt }
 }
 
-export function taskView(db: Repos, task: TaskRow, worker: WorkerView | undefined, actor: Actor = owner, latest?: RunRow): TaskView {
+export function taskView(db: Repos, task: TaskRow, worker: WorkerView | undefined, actor: Actor = owner, latest?: RunRow, allowRequesterCommands = false): TaskView {
   const state = taskState(db, task)
   return { ...(latest?.verificationStatus && { verification: latest.verificationStatus }), id: task.id, taskNo: task.taskNo, version: task.version, title: task.title, status: task.status,
     priority: task.priority, requester: { ...state.requester, ...(task.requesterName && { name: task.requesterName }) },
@@ -50,11 +50,11 @@ export function taskView(db: Repos, task: TaskRow, worker: WorkerView | undefine
     maxAttempts: task.maxAttempts, parentTaskId: task.parentTaskId, lastProgress: task.lastProgress, scheduleHint: task.scheduleHint,
     workerConnection: worker?.connection ?? null, graceUntil: task.currentRunId ? worker?.graceUntil ?? null : null,
     errorCode: task.errorCode, resultDeliveryStatus: task.resultDeliveryStatus, createdAt: task.createdAt, updatedAt: task.updatedAt,
-    startedAt: task.startedAt, finishedAt: task.finishedAt, allowedActions: allowedActions(state, actor) }
+    startedAt: task.startedAt, finishedAt: task.finishedAt, allowedActions: allowedActions(state, actor, allowRequesterCommands) }
 }
-export function taskDetail(db: Repos, task: TaskRow, getWorker: (id: string) => WorkerView | undefined, actor: Actor): TaskDetailView {
+export function taskDetail(db: Repos, task: TaskRow, getWorker: (id: string) => WorkerView | undefined, actor: Actor, allowRequesterCommands = false): TaskDetailView {
   const runs = taskRunsFor(db, task.id)
-  const view = taskView(db, task, runs[0] && getWorker(runs[0].workerId), actor, runs[0])
+  const view = taskView(db, task, runs[0] && getWorker(runs[0].workerId), actor, runs[0], allowRequesterCommands)
   const input = findInput(db, task.id)
   const policy = task.policyDecisionJson as PolicyOutcome
   const base = task.handoffFromRunId ? db.runs.get(task.handoffFromRunId) : undefined

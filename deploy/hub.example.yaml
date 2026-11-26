@@ -52,7 +52,24 @@ retention:
 dashboard:
   allowedOrigins: [https://hub.example.com] # 浏览器 Origin，含协议，无尾部斜杠
   sessionTtlMs: 43200000
+# P2、P5–P9 可单独开启，修改后由 Hub 热加载。
+permissions:
+  allowRequesterCommands: false # P2 已授权请求人的扩展指令
+  autoApproveAll: false # P5 跳过任务审批
+  disableResultGating: false # P6 跳过黑板、验证及敏感文件的强制送审
+  disableRequesterLimits: false # P7 跳过每小时提交数和活跃任务数限制
+  allowRequesterAutoAccept: false # P8 符合验收条件的写入可更新 lastAccepted
+  allowRequesterHandoff: false # P9 接力、修复及手动验收自己的运行
+harness:
+  defaults:
+    allowRequesterBlackboard: false
+    allowRequesterVerify: false
+    autoFixMaxRetries: 0 # P10 自动修复上限，可设为 2
 feishu:
+  deliveryMode: hybrid # 执行时更新卡片，结束后用文本回复；card 使用原卡片
+  groupAudience: requester # P1 设为 owner 可在 allowedChatIds 中展示内部进度
+  allowGroupCommands: false # P2 允许在群里 @机器人 接力
+  defaultProfile: edit # P12 可设为 full，单群及指令设置优先
   enabled: true # 暂不接入飞书时改为 false
   domain: feishu
   ownerOpenIds: [] # 启动后私聊 /whoami，将本应用的 ou_... 加入
@@ -64,4 +81,4 @@ feishu:
   defaultWorkspaceId: sandbox
   chatDefaults: {} # 示例 { oc_xxx: { workspaceId: sandbox, adapter: codex } }
   staleMessageMs: 600000
-  card: { minPatchIntervalMs: 3000, minPatchIntervalHighMs: 1000, globalPatchQps: 5, cardMaxBytes: 28672, cardResultMaxChars: 2000 }
+  card: { minPatchIntervalMs: 1500, minPatchIntervalHighMs: 1000, globalPatchQps: 5, cardMaxBytes: 28672, cardResultMaxChars: 2000 }
