@@ -154,7 +154,9 @@ export function classifyAndRoute(
   opts: { autoSelectAdapter: boolean; proposeAutopilot: boolean },
 ): SmartRouteDecision {
   const trimmed = text.trim()
-  const isQuestion = (/^(为什么|怎么|如何|解释|帮我看下|分析|查询|有哪些)/u.test(trimmed) || /[?？]$/u.test(trimmed)) &&
+  // 问句与闲聊（「今天天气怎么样」「你好」「语音能用吗」）只读回答，不改代码也不写黑板
+  const isQuestion = (/^(为什么|怎么|如何|解释|帮我看下|分析|查询|有哪些|你好|您好|hi|hello|在吗)/iu.test(trimmed) ||
+    /([?？]|吗|嘛|呢|么|怎么样|如何|是什么|是多少|有没有|对不对|行不行)[。.!！~～\s]*$/u.test(trimmed)) &&
     !codeKeywords.test(trimmed)
 
   let intent: SmartRouteDecision['intent'] = 'standard'
