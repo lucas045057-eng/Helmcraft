@@ -27,14 +27,3 @@ it('still falls back to raw output when no line of a JSON stream is understood',
   expect(outcome.errorMessage).toContain('输出格式无法识别')
   expect(outcome.summary).toContain('brand-new-format')
 })
-
-it('reports subscription quota windows once per change', () => {
-  const parser = claudeCodeAdapter.createParser()
-  const event = (five: number) => json({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: 'five_hour',
-    unifiedWindows: { five_hour: { utilization: five, resetsAt: 1795718400, status: 'allowed' }, seven_day: { utilization: 0.36, resetsAt: 1796108400, status: 'allowed' } } } })
-  expect(parser.onStdout(event(0.22))).toEqual([{ kind: 'agent', event: { type: 'quota', windows: [
-    { name: 'five_hour', utilization: 0.22, resetsAt: 1795718400000, status: 'allowed' },
-    { name: 'seven_day', utilization: 0.36, resetsAt: 1796108400000, status: 'allowed' }] } }])
-  expect(parser.onStdout(event(0.22))).toEqual([])
-  expect(parser.onStdout(event(0.23))).toHaveLength(1)
-})

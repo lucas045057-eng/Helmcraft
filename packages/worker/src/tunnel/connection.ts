@@ -5,7 +5,7 @@ import type { RawData } from 'ws'
 import { backoff, ulid } from '@agent-hub/common'
 import type { Clock } from '@agent-hub/common'
 import { FrameId, HubToWorkerFrame, MIN_WORKER_WINDOW_BYTES, WORKER_SUBPROTOCOL } from '@agent-hub/protocol'
-import type { HubChallenge, HubWelcome, WorkerHeartbeat, WorkerHello, WorkerToHubFrame } from '@agent-hub/protocol'
+import type { AdapterQuota, HubChallenge, HubWelcome, WorkerHeartbeat, WorkerHello, WorkerToHubFrame } from '@agent-hub/protocol'
 import type { WorkerConfig } from '../config/schema.js'
 import { workspaceDeclarations, workspaceProjects } from '../config/load.js'
 import type { WorkerIdentity } from '../identity.js'
@@ -19,6 +19,8 @@ export interface TunnelOptions {
   onStop?: (code: number) => void
   onWarning?: (message: string) => void
   random?: () => number
+  /** 本机 CLI 订阅额度，变化时随心跳上报 */
+  quotas?: () => AdapterQuota[]
 }
 
 export class WorkerTunnel {
@@ -38,6 +40,7 @@ export class WorkerTunnel {
   private heartbeatTimeoutMs = 30_000
   private lastHubBootId: string | undefined
   private sentProjects = ''
+  private sentQuotas = ''
   private readonly offset = new ClockOffset()
   private readonly commands: Commands
   private stopTick?: () => void
@@ -157,6 +160,7 @@ export class WorkerTunnel {
       arch: process.arch, nodeVersion: process.version, pid: process.pid }
     const workspaces = workspaceDeclarations(this.config)
     this.sentProjects = JSON.stringify(Object.fromEntries(workspaces.map(ws => [ws.id, ws.projects])))
+    this.sentQuotas = ''
     this.send({ type: 'worker.hello', payload: { auth: { workerId: this.config.workerId, clientNonce, keyFingerprint: this.identity.fingerprint,
       signature: sign(null, signed, this.identity.privateKey).toString('base64url') }, agent, maxConcurrency: this.config.maxConcurrency,
       adapters: this.adapters.capabilities(), workspaces, runs: this.runs.report(),
@@ -195,10 +199,12 @@ export class WorkerTunnel {
     // 新建/删除项目文件夹后，下一次心跳把新的项目列表带给 Hub
     const projects = workspaceProjects(this.config), scanned = JSON.stringify(projects), changed = scanned !== this.sentProjects
     this.sentProjects = scanned
+    const quotas = this.options.quotas?.() ?? [], quotaJson = JSON.stringify(quotas), quotasChanged = quotaJson !== this.sentQuotas
+    this.sentQuotas = quotaJson
     this.send({ type: 'worker.heartbeat', payload: { activeRuns: this.runs.report().filter(run => run.state !== 'finished')
       .map(({ runId, state, lastSeq }) => ({ runId, state, lastSeq })), slotsUsed: this.runs.slotsUsed,
     load: { memFreeMb: Math.floor(freemem() / 1048576), memTotalMb: Math.floor(totalmem() / 1048576) },
-    bufferedBytes: this.runs.outbox.bufferedBytes, droppedLogBytesTotal: this.runs.outbox.droppedLogBytesTotal, adapters, ...(changed && { projects }) } })
+    bufferedBytes: this.runs.outbox.bufferedBytes, droppedLogBytesTotal: this.runs.outbox.droppedLogBytesTotal, adapters, ...(changed && { projects }), ...(quotasChanged && { quotas }) } })
   }
   private send(frame: Payload<WorkerToHubFrame>) {
     if (this.ws?.readyState !== WebSocket.OPEN) return false

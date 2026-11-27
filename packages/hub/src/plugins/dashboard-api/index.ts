@@ -17,7 +17,6 @@ import { runView, owner } from '../orchestrator/views.js'
 import { controlProject, rebaselineProject } from '../orchestrator/personal-controls.js'
 import { projectReports, projectViews } from '../orchestrator/personal-status.js'
 import { addMethodExample, createMethod, deleteMethod, getMethod, listMethods, removeMethodExample, suggestFor, updateMethod } from '../orchestrator/methods.js'
-import { setDefaultModel } from '../orchestrator/agents.js'
 
 export const name = 'dashboard-api'
 export const inject = ['http', 'auth', 'orchestrator', 'workers', 'store', 'clock', 'policy']
@@ -233,9 +232,13 @@ export function apply(ctx: Context, config: DashboardConfig) {
     if (!api.MethodId.safeParse(params.id).success) throw new HubError('VALIDATION_FAILED', 404, { reason: 'METHOD_NOT_FOUND' })
     return params.id!
   }
-  route('GET', '/agents', 'read', () => api.AgentOverviewResponse.parse(orchestrator.agentOverview()))
-  route('PUT', '/agents/:adapter/model', 'admin', (req, _res, params, actor) =>
-    store.tx(db => setDefaultModel(db, (params as { adapter: string }).adapter, req.body, actor, ctx.clock.now())))
+  // 各 Worker 上报的 CLI 订阅额度（面板顶部额度栏）
+  route('GET', '/quotas', 'read', () => api.QuotaOverviewResponse.parse(store.tx(db =>
+    (db.prepare('SELECT worker_id, quota_json FROM adapter_quota ORDER BY adapter, worker_id').all() as Array<{ worker_id: string; quota_json: string }>)
+      .flatMap(row => {
+        const quota = api.AdapterQuota.safeParse(JSON.parse(row.quota_json))
+        return quota.success ? [{ ...quota.data, workerId: row.worker_id }] : []
+      }))))
   route('GET', '/methods', 'read', req => api.MethodListResponse.parse(store.tx(db =>
     listMethods(db, typeof (req.query as Record<string, unknown>).q === 'string' ? (req.query as { q: string }).q : undefined))))
   route('POST', '/methods', 'admin', (req, res, _params, actor) =>

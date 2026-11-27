@@ -14,6 +14,7 @@ import type { TunnelOptions } from './tunnel/connection.js'
 import { Journal } from './runner/journal.js'
 import { acquireWorkerLock } from './runner/lock.js'
 import { RunManager } from './runner/run-manager.js'
+import { QuotaMonitor } from './quota/monitor.js'
 
 export interface WorkerOptions extends TunnelOptions {
   stateDir?: string
@@ -21,6 +22,8 @@ export interface WorkerOptions extends TunnelOptions {
   identity: WorkerIdentity
   clock?: Clock
   adapters?: CliAdapter[]
+  /** 定时查询本机 CLI 订阅额度（命令行启动时开启；测试默认关闭） */
+  quota?: { intervalMs?: number }
 }
 function expandPath(path: string) { return path.replace(/%([^%]+)%/g, (match, name: string) => process.env[name] ?? match) }
 
@@ -50,8 +53,10 @@ export async function startWorker(input: WorkerConfig, options: WorkerOptions) {
     let pendingApply = Promise.resolve()
     let debounce: ReturnType<typeof setTimeout> | undefined
     let stopRequested = false
+    const quota = options.quota && new QuotaMonitor(registry, () => clock.now())
+    const refreshQuota = () => { void quota?.refresh().catch(() => warn('Quota probe failed')) }
     const tunnel = new WorkerTunnel(config, options.identity, runner, registry, clock, {
-      onWarning: warn, onStop: code => { void close().then(() => options.onStop?.(code), () => options.onStop?.(1)) },
+      onWarning: warn, ...(quota && { quotas: () => quota.list() }), onStop: code => { void close().then(() => options.onStop?.(code), () => options.onStop?.(1)) },
       ...(options.random && { random: options.random }),
     })
     function applyPending() {
@@ -97,6 +102,8 @@ export async function startWorker(input: WorkerConfig, options: WorkerOptions) {
     })() : undefined
     const stopRuns = clock.setInterval(() => { runner.tick(); applyPending() }, 250)
     const stopProbe = clock.setInterval(() => { void registry.probe().catch(() => warn('Adapter probe failed')) }, 60_000)
+    const stopQuota = quota ? clock.setInterval(refreshQuota, options.quota?.intervalMs ?? 5 * 60_000) : () => undefined
+    refreshQuota()
     let closed: Promise<void> | undefined
     function close() {
       if (closed) return closed
@@ -106,6 +113,7 @@ export async function startWorker(input: WorkerConfig, options: WorkerOptions) {
       watcher?.close()
       clearTimeout(debounce)
       stopProbe()
+      stopQuota()
       closed = (async () => {
         try {
           if (config.shutdown.drainTimeoutMs && runner.slotsUsed) {

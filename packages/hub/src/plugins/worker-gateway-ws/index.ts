@@ -292,6 +292,12 @@ export class WorkerGatewayWs extends Service implements WorkerGateway {
         const projects = frame.payload.projects
         const workspaces = projects && (row.workspacesJson as WorkerView['workspaces'] | null ?? []).map(ws => ({ ...ws, projects: projects[ws.id] ?? [] }))
         this.update(conn.workerId, { lastSeenAt: conn.lastFrame, connection: 'online', capabilitiesJson: adapters, ...(workspaces && { workspacesJson: workspaces }) })
+        const quotas = frame.payload.quotas
+        if (quotas) this.ctx.store.tx(db => {
+          db.prepare('DELETE FROM adapter_quota WHERE worker_id = ?').run(conn.workerId)
+          const insert = db.prepare('INSERT INTO adapter_quota (worker_id, adapter, quota_json, updated_at) VALUES (?, ?, ?, ?)')
+          for (const quota of quotas) insert.run(conn.workerId, quota.adapter, JSON.stringify(quota), conn.lastFrame)
+        })
         this.emitFrame(conn, { type: 'hub.heartbeat_ack', payload: { serverTime: this.ctx.clock.now() } })
         break
       }

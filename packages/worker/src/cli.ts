@@ -83,7 +83,7 @@ export async function main(args = process.argv.slice(2)) {
     }
     case 'run': {
       if (!existing) throw new Error('worker.yaml is required')
-      const worker = await startWorker(existing, { identity: loadIdentity(identityPath), configPath: path,
+      const worker = await startWorker(existing, { identity: loadIdentity(identityPath), configPath: path, quota: {},
         onStop: code => { process.exitCode = code; removeSignals() } })
       const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM', ...(process.platform === 'win32' ? ['SIGBREAK' as const] : [])]
       const stop = () => { void worker.close().then(removeSignals, () => { process.exitCode = 1; removeSignals() }) }
