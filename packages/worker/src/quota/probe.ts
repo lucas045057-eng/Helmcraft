@@ -97,7 +97,8 @@ export async function antigravityQuota(env: QuotaEnv): Promise<QuotaResult | nul
   const expired = () => (time(token?.expiry) ?? 0) < env.now() + 60_000
   if (expired() && env.refreshAntigravity) { await env.refreshAntigravity().catch(() => undefined); token = await read() }
   if (!token || typeof token.access_token !== 'string' || expired()) return { windows: [], error: '登录已过期，下次跑 Antigravity 任务后自动恢复' }
-  const init = { method: 'POST', headers: { authorization: 'Bearer ' + token.access_token, 'content-type': 'application/json' }, body: '{}' }
+  // 不带 antigravity 的 User-Agent 会被当成无授权产品返回 403
+  const init = { method: 'POST', headers: { authorization: 'Bearer ' + token.access_token, 'content-type': 'application/json', 'user-agent': 'antigravity' }, body: '{}' }
   const base = 'https://cloudcode-pa.googleapis.com/v1internal:'
   const [summary, models] = await Promise.all([json(env, base + 'retrieveUserQuotaSummary', init), json(env, base + 'fetchAvailableModels', init).catch(() => undefined)])
   const windows: QuotaWindow[] = []
