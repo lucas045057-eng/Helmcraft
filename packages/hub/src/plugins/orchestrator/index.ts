@@ -1044,7 +1044,9 @@ export class OrchestratorService extends Service implements Orchestrator, Worker
     return launchAutopilot(this.ctx, this, input, actor, origin)
   }
   runBriefing(kind: 'morning' | 'manual' | 'patrol', filter: RunBriefingRequest = {}): ProjectBriefingView[] {
-    return runStewardBriefing(this.ctx, this.listProjects(), kind, filter, Boolean(filter.notifyFeishu || kind === 'morning'))
+    const scope = this.config.steward?.workspaceIds ?? []
+    const projects = this.listProjects().filter(project => !scope.length || scope.includes(project.workspaceId))
+    return runStewardBriefing(this.ctx, projects, kind, filter, Boolean(filter.notifyFeishu || kind === 'morning'))
   }
   listBriefings(query: { workerId?: string; workspaceId?: string; subdir?: string; limit?: number } = {}): ProjectBriefingView[] {
     return queryBriefings(this.db, query)

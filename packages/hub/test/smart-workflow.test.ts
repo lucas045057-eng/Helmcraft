@@ -391,6 +391,7 @@ describe('smart workflow hub end-to-end', () => {
         patrolIntervalMs: 3_600_000,
         briefingHour: 9,
         briefingMinute: 0,
+        workspaceIds: ['soren'],
         notifyChatIds: ['oc_group', 'oc_other_group'],
       },
     }, { clock, feishuTransport: fake })
@@ -403,6 +404,9 @@ describe('smart workflow hub end-to-end', () => {
         id: 'soren', label: 'Soren', allowedAdapters: ['codex', 'claude-code', 'mock'],
         maxProfile: 'full', maxConcurrent: 2, isGitRepo: false,
         projects: [{ dir: 'Forma', isGitRepo: true }],
+      }, {
+        id: 'daily', label: 'Daily', allowedAdapters: ['codex', 'claude-code', 'mock'],
+        maxProfile: 'full', maxConcurrent: 2, isGitRepo: false,
       }],
     })
     cleanups.push(async () => worker.terminate())
@@ -425,6 +429,9 @@ describe('smart workflow hub end-to-end', () => {
       m.target === 'oc_other_group' && m.body.type === 'interactive' && JSON.stringify(m.body.card).includes('📋 项目状态')))
     expect(JSON.stringify(reqCardEntry![1].body)).not.toContain('briefing_run')
     expect(JSON.stringify(reqCardEntry![1].body)).not.toContain('推荐下一步')
+    // 简报只覆盖 steward.workspaceIds 里的工作区
+    expect(hub.ctx.orchestrator.listBriefings().map(b => b.workspaceId)).not.toContain('daily')
+    expect(hub.ctx.orchestrator.listBriefings().some(b => b.workspaceId === 'soren')).toBe(true)
 
     // Card callback requires bound messageId match (P1 #9)
     const propMatch = JSON.stringify(ownerCardEntry![1].body).match(/prp_[0-9A-HJKMNP-TV-Z]{26}/u)!

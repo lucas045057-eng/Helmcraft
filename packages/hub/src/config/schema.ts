@@ -89,6 +89,7 @@ export const HubConfigSchema = z.strictObject({
     patrolIntervalMs: z.number().int().min(60_000).max(86_400_000).default(3_600_000),
     briefingHour: z.number().int().min(0).max(23).default(9),
     briefingMinute: z.number().int().min(0).max(59).default(0),
+    workspaceIds: z.array(z.string()).default([]),   // 简报只覆盖这些工作区里的项目；空 = 全部
     notifyChatIds: z.array(z.string()).default([]),
   }).prefault({}),
 })
